@@ -1,0 +1,18 @@
+{
+  "slug": "Beams",
+  "name": "Beams",
+  "version": "2.0.0",
+  "license": "GPL-3.0-or-later",
+  "author": "Grandsummoner",
+  "authorUrl": "https://github.com/Grandsummoner",
+  "pluginUrl": "https://github.com/Grandsummoner/beams",
+  "sourceUrl": "https://github.com/Grandsummoner/beams",
+  "modules": [
+    {
+      "slug": "Beams",
+      "name": "Beams",
+      "description": "Quad drum sampler -- 4 tracks of user-loaded WAV round-robin playback, each with its own Euclidean rhythm generator synced to a shared clock (or free-running on its own TEMPO when unpatched). Works fully standalone; optionally takes a DECAY offset from Intel's TONE knob when connected anywhere along the same row.",
+      "tags": ["Drum", "Sampler", "Sequencer", "Clock modulator"]
+    }
+  ]
+}
