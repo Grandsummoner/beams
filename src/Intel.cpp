@@ -259,6 +259,10 @@ struct Intel : Module {
 		return m && m->model && m->model->plugin && m->model->plugin->slug == "Stellar"
 			&& m->model->slug == "Stellar";
 	}
+	static bool isBeams(Module* m) {
+		return m && m->model && m->model->plugin && m->model->plugin->slug == "Beams"
+			&& m->model->slug == "Beams";
+	}
 
 	void process(const ProcessArgs& args) override {
 		if (firstProcess) { onSampleRateChange(); firstProcess = false; }
@@ -345,6 +349,8 @@ struct Intel : Module {
 		// adjLeft/adjRight = strictly adjacent, used only for LINK lights.
 		Module* cmdLeft = intelLinkFind(this, false, "SpacesCommand");
 		Module* cmdRight = intelLinkFind(this, true, "SpacesCommand");
+		Module* beamsLeft = intelLinkFind(this, false, "Beams");
+		Module* beamsRight = intelLinkFind(this, true, "Beams");
 		bool adjLeft = isCommand(leftExpander.module);
 		bool adjRight = isCommand(rightExpander.module);
 		float meterLevel;
@@ -397,8 +403,28 @@ struct Intel : Module {
 		// its own consumerMessage on its next process() call. Writing into
 		// your own producerMessage/flipping your own expander (what I had
 		// here initially) would just make you read your own data back.
-		lights[LINK_LEFT_LIGHT].setBrightness(adjLeft || isStellarModule(leftExpander.module) ? 1.f : 0.f);
-		lights[LINK_RIGHT_LIGHT].setBrightness(adjRight || isStellarModule(rightExpander.module) ? 1.f : 0.f);
+		lights[LINK_LEFT_LIGHT].setBrightness(adjLeft || isStellarModule(leftExpander.module) || isBeams(leftExpander.module) ? 1.f : 0.f);
+		lights[LINK_RIGHT_LIGHT].setBrightness(adjRight || isStellarModule(rightExpander.module) || isBeams(rightExpander.module) ? 1.f : 0.f);
+		if (beamsLeft || beamsRight) {
+			// Beams link: a single DECAY offset, sourced from the REVERB
+			// page's stored tone value specifically (not just "whatever
+			// params[TONE_PARAM] currently shows"), so Beams' decay
+			// character doesn't jump around just because the user pages
+			// Intel over to DELAY to tweak something unrelated.
+			IntelModMessage bmsg;
+			bmsg.decayOffset = reverbPage.tone;
+			bmsg.present = true;
+			if (beamsLeft) {
+				Module* bm = beamsLeft;
+				*(IntelModMessage*)bm->rightExpander.producerMessage = bmsg;
+				bm->rightExpander.messageFlipRequested = true;
+			}
+			if (beamsRight) {
+				Module* bm = beamsRight;
+				*(IntelModMessage*)bm->leftExpander.producerMessage = bmsg;
+				bm->leftExpander.messageFlipRequested = true;
+			}
+		}
 		if (cmdLeft || cmdRight) {
 			IntelModMessage msg;
 			msg.rateOffset = lfo[0].modValue;

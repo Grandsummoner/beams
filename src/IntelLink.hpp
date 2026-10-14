@@ -23,10 +23,25 @@ struct IntelModMessage {
 	float densDepth = 0.f;
 	float swingDepth = 0.f;
 	float entropyDepth = 0.f;
-	// True whenever Intel is actually present and sending -- lets Command
-	// tell "adjacent but message not yet flipped this frame" apart from
-	// "no Intel here", though in practice the adjacency check on Command's
-	// side (model slug match) already covers most of that distinction.
+	// Global DECAY offset for Beams, 0..1, sent from Intel's TONE knob
+	// (TONE stays Intel's own REVERB-page tone control; this is a second,
+	// simultaneous use of that same knob's value, not a separate control).
+	// Beams treats this as an additive offset over each track's own local
+	// DECAY knob, same "generic offset, receiver scales against its own
+	// real range" pattern as the *Offset fields above.
+	float decayOffset = 0.f;
+	//
+	// This one struct type is reused for BOTH the Intel<->Command link
+	// AND the separate Intel<->Beams link -- they're different message
+	// instances (each module owns its own producer/consumer buffers for
+	// its own expander slots, see the comment on Command's/Beams'
+	// buffers), so there's no collision: Command's `present` means
+	// "Intel is talking to COMMAND" on Command's own buffer instance,
+	// Beams' `present` means "Intel is talking to BEAMS" on Beams' own,
+	// separate buffer instance. Each side only reads the fields
+	// relevant to it (Command: rate/dens/swing/entropy; Beams: decay).
+	// True whenever Intel is actually present and sending on this
+	// particular link.
 	bool present = false;
 };
 
