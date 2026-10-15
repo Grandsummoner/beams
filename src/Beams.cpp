@@ -3,7 +3,7 @@
 #include <osdialog.h>
 #include <system.hpp>
 #define DR_WAV_IMPLEMENTATION
-#include "../dep/dr_wav.h"
+#include "dr_wav.h"
 #include <algorithm>
 #include <vector>
 #include <string>
