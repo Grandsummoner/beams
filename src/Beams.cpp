@@ -7,29 +7,26 @@
 #include <algorithm>
 #include <vector>
 #include <string>
+#include <mutex>
 
 // ---------------------------------------------------------------------
 // Euclidean rhythm generator
 // ---------------------------------------------------------------------
-// Bresenham-line distribution -- a simple, well-established practical
-// equivalent to Bjorklund's recursive algorithm for spreading `k` hits
-// as evenly as possible across `n` steps (same result class used by a
-// lot of hardware Euclidean implementations). Far less code than a true
-// recursive Bjorklund, with no meaningful difference for this use.
+// Evenly spreads `k` hits across `n` steps with a hit ALWAYS on step 0
+// (the standard Euclidean placement: E(4,8) = x.x.x.x., E(3,8) =
+// x..x..x., E(2,8) = x...x...). The test is ((i*k) mod n) < k -- a
+// closed form of the same even-distribution idea as Bjorklund's
+// algorithm, without the recursion. An earlier Bresenham-accumulator
+// version spread hits just as evenly but started a step late, so a
+// 4-of-8 kick landed on the off-beats at ROT 0.
 static std::vector<bool> euclideanPattern(int n, int k) {
 	std::vector<bool> pattern(std::max(n, 1), false);
 	if (n <= 0) return pattern;
 	k = clamp(k, 0, n);
 	if (k <= 0) return pattern;
 	if (k >= n) { pattern.assign(n, true); return pattern; }
-	int bucket = 0;
-	for (int i = 0; i < n; i++) {
-		bucket += k;
-		if (bucket >= n) {
-			bucket -= n;
-			pattern[i] = true;
-		}
-	}
+	for (int i = 0; i < n; i++)
+		pattern[i] = ((i * k) % n) < k;
 	return pattern;
 }
 
@@ -40,6 +37,70 @@ struct SampleSlot {
 	std::vector<float> data;  // mono, already resampled to the engine's rate
 	bool loaded = false;
 };
+
+// Decodes up to 4 .wav files (alphabetical) from `dir` into `kit`,
+// resampling each to `engineRate` with simple linear interpolation
+// (adequate for a one-time load; TUNE already does linear-interpolated
+// playback, so this matches that quality tier). Runs entirely on local
+// data -- nothing the audio thread touches -- so the module only needs
+// to take its lock for the final swap (see Beams::loadTrackFolder).
+struct LoadedKit {
+	SampleSlot slots[4];
+	int count = 0;
+};
+
+static bool decodeKit(const std::string& dir, float engineRate, LoadedKit& kit) {
+	std::vector<std::string> entries = system::getEntries(dir);
+	std::vector<std::string> wavs;
+	for (auto& e : entries) {
+		std::string lower = e;
+		std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+		if (lower.size() > 4 && lower.substr(lower.size() - 4) == ".wav")
+			wavs.push_back(e);
+	}
+	std::sort(wavs.begin(), wavs.end());
+	if (wavs.empty()) return false;
+	if (wavs.size() > 4) wavs.resize(4);
+
+	int count = 0;
+	for (auto& path : wavs) {
+		unsigned int channels = 0, sampleRate = 0;
+		drwav_uint64 totalFrames = 0;
+		float* raw = drwav_open_file_and_read_pcm_frames_f32(path.c_str(), &channels, &sampleRate, &totalFrames, NULL);
+		if (!raw) continue;
+		if (channels == 0) { drwav_free(raw, NULL); continue; }
+
+		// Fold to mono.
+		std::vector<float> mono(totalFrames);
+		for (drwav_uint64 f = 0; f < totalFrames; f++) {
+			float sum = 0.f;
+			for (unsigned int c = 0; c < channels; c++) sum += raw[f * channels + c];
+			mono[f] = sum / (float) channels;
+		}
+		drwav_free(raw, NULL);
+
+		SampleSlot& slot = kit.slots[count];
+		if (sampleRate != (unsigned int) engineRate && sampleRate > 0 && !mono.empty()) {
+			double ratio = (double) sampleRate / (double) engineRate;
+			size_t outLen = (size_t) (mono.size() / ratio);
+			slot.data.resize(outLen);
+			for (size_t o = 0; o < outLen; o++) {
+				double srcPos = o * ratio;
+				size_t i0 = (size_t) srcPos;
+				size_t i1 = std::min(i0 + 1, mono.size() - 1);
+				float frac = (float) (srcPos - i0);
+				slot.data[o] = mono[i0] * (1.f - frac) + mono[i1] * frac;
+			}
+		}
+		else {
+			slot.data = mono;
+		}
+		slot.loaded = true;
+		count++;
+	}
+	kit.count = count;
+	return count > 0;
+}
 
 struct TrackVoice {
 	SampleSlot slots[4];
@@ -60,7 +121,7 @@ struct TrackVoice {
 	std::vector<bool> cachedPattern;
 
 	dsp::SchmittTrigger trigInTrig;
-	dsp::BooleanTrigger rrModeTrig, fillTrig, invTrig;
+	std::string folder;   // last folder loaded -- saved in the patch
 	bool rrMode = false;  // false = SEQ, true = RND
 	bool fillOn = false;
 	bool invOn = false;
@@ -102,69 +163,6 @@ struct TrackVoice {
 		envAttack = 0.f;
 		envValue = 1.f;
 		velocity = vel;
-	}
-
-	// Loads up to 4 .wav files (alphabetical) from `dir` into this
-	// track's slots, resampling each to `engineRate` with simple linear
-	// interpolation (adequate for a one-time load-time operation; the
-	// TUNE knob already does runtime linear-interpolated playback, so
-	// this matches that same quality tier rather than pulling in a
-	// second resampling method).
-	bool loadFolder(const std::string& dir, float engineRate) {
-		std::vector<std::string> entries = system::getEntries(dir);
-		std::vector<std::string> wavs;
-		for (auto& e : entries) {
-			std::string lower = e;
-			std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
-			if (lower.size() > 4 && lower.substr(lower.size() - 4) == ".wav")
-				wavs.push_back(e);
-		}
-		std::sort(wavs.begin(), wavs.end());
-		if (wavs.empty()) return false;
-		if (wavs.size() > 4) wavs.resize(4);
-
-		for (int i = 0; i < 4; i++) slots[i] = SampleSlot();
-		int count = 0;
-		for (auto& path : wavs) {
-			unsigned int channels = 0, sampleRate = 0;
-			drwav_uint64 totalFrames = 0;
-			float* raw = drwav_open_file_and_read_pcm_frames_f32(path.c_str(), &channels, &sampleRate, &totalFrames, NULL);
-			if (!raw) continue;
-
-			// Fold to mono.
-			std::vector<float> mono(totalFrames);
-			for (drwav_uint64 f = 0; f < totalFrames; f++) {
-				float sum = 0.f;
-				for (unsigned int c = 0; c < channels; c++) sum += raw[f * channels + c];
-				mono[f] = sum / (float) channels;
-			}
-			drwav_free(raw, NULL);
-
-			// Resample to engine rate if needed (simple linear interp --
-			// fine for a one-shot load, not a real-time path).
-			SampleSlot& slot = slots[count];
-			if (sampleRate != (unsigned int) engineRate && sampleRate > 0 && !mono.empty()) {
-				double ratio = (double) sampleRate / (double) engineRate;
-				size_t outLen = (size_t) (mono.size() / ratio);
-				slot.data.resize(outLen);
-				for (size_t o = 0; o < outLen; o++) {
-					double srcPos = o * ratio;
-					size_t i0 = (size_t) srcPos;
-					size_t i1 = std::min(i0 + 1, mono.size() - 1);
-					float frac = (float) (srcPos - i0);
-					slot.data[o] = mono[i0] * (1.f - frac) + mono[i1] * frac;
-				}
-			}
-			else {
-				slot.data = mono;
-			}
-			slot.loaded = true;
-			count++;
-		}
-		loadedCount = count;
-		rrIndex = 0;
-		lastPlayed = -1;
-		return count > 0;
 	}
 };
 
@@ -242,8 +240,53 @@ struct Beams : Module {
 		return m && m->model && m->model->plugin && m->model->plugin->slug == "Stellar" && m->model->slug == "Stellar";
 	}
 
+	// Guards sample buffers against the UI thread swapping a freshly
+	// decoded kit in while the audio thread is reading the old one.
+	// Decoding happens outside the lock; only the swap is locked, and the
+	// audio thread uses try_lock (skips playback for that sample rather
+	// than ever blocking).
+	std::mutex sampleMutex;
+
+	bool loadTrackFolder(int track, const std::string& dir, float engineRate) {
+		LoadedKit kit;
+		if (!decodeKit(dir, engineRate, kit)) return false;
+		std::lock_guard<std::mutex> g(sampleMutex);
+		TrackVoice& t = tracks[track];
+		for (int i = 0; i < 4; i++) t.slots[i] = std::move(kit.slots[i]);
+		t.loadedCount = kit.count;
+		t.rrIndex = 0;
+		t.lastPlayed = -1;
+		t.activeSlot = -1;
+		t.folder = dir;
+		return true;
+	}
+
 	void onReset() override {
+		std::lock_guard<std::mutex> g(sampleMutex);
 		for (int i = 0; i < 4; i++) tracks[i] = TrackVoice();
+	}
+
+	// Samples live on disk, not in the patch: save each track's folder
+	// path and re-decode on load. A folder that has moved just leaves
+	// that track empty (press LOAD again).
+	json_t* dataToJson() override {
+		json_t* root = json_object();
+		json_t* arr = json_array();
+		for (int i = 0; i < 4; i++)
+			json_array_append_new(arr, json_string(tracks[i].folder.c_str()));
+		json_object_set_new(root, "folders", arr);
+		return root;
+	}
+	void dataFromJson(json_t* root) override {
+		json_t* arr = json_object_get(root, "folders");
+		if (!arr) return;
+		for (int i = 0; i < 4; i++) {
+			json_t* js = json_array_get(arr, i);
+			if (js && json_is_string(js)) {
+				std::string p = json_string_value(js);
+				if (!p.empty()) loadTrackFolder(i, p, APP->engine->getSampleRate());
+			}
+		}
 	}
 
 	void process(const ProcessArgs& args) override {
@@ -290,14 +333,20 @@ struct Beams : Module {
 			}
 		}
 
+		std::unique_lock<std::mutex> sampleLock(sampleMutex, std::try_to_lock);
+		bool canPlay = sampleLock.owns_lock();  // false only while a freshly loaded kit is being swapped in
+
 		float mixL = 0.f, mixR = 0.f;
 		for (int i = 0; i < 4; i++) {
 			TrackVoice& t = tracks[i];
 
-			// --- Toggles (momentary params, edge-detected to flip state) ---
-			if (t.rrModeTrig.process(params[RRMODE_PARAM + i].getValue() > 0.5f)) t.rrMode = !t.rrMode;
-			if (t.fillTrig.process(params[FILL_PARAM + i].getValue() > 0.5f)) t.fillOn = !t.fillOn;
-			if (t.invTrig.process(params[INV_PARAM + i].getValue() > 0.5f)) t.invOn = !t.invOn;
+			// --- Toggles: these are latched switch params, so the param
+			// value IS the state. (An earlier version edge-detected the
+			// param and flipped a separate internal flag, which fell out
+			// of sync with the visible button on every second click.) ---
+			t.rrMode = params[RRMODE_PARAM + i].getValue() > 0.5f;
+			t.fillOn = params[FILL_PARAM + i].getValue() > 0.5f;
+			t.invOn = params[INV_PARAM + i].getValue() > 0.5f;
 
 			// --- Triggering: external TRIG input overrides internal Euclidean ---
 			bool patched = inputs[TRIG_INPUT + i].isConnected();
@@ -305,7 +354,7 @@ struct Beams : Module {
 				float v = inputs[TRIG_INPUT + i].getVoltage();
 				if (t.trigInTrig.process(v, 0.1f, 2.f)) {
 					float vel = clamp(v / 10.f, 0.1f, 1.f);
-					t.trigger(vel);
+					if (canPlay) t.trigger(vel);
 				}
 			}
 			else if (pulse) {
@@ -313,12 +362,12 @@ struct Beams : Module {
 				int steps = (int) std::round(params[STEPS_PARAM + i].getValue());
 				int rot = (int) std::round(params[ROT_PARAM + i].getValue());
 				t.stepCounter = (t.stepCounter + 1) % len;
-				if (t.stepHit(len, steps, rot)) t.trigger(1.f);
+				if (t.stepHit(len, steps, rot) && canPlay) t.trigger(1.f);
 			}
 
 			// --- Playback: resampled (TUNE) mono read, attack+decay envelope ---
 			float voice = 0.f;
-			if (t.activeSlot >= 0 && t.loadedCount > 0) {
+			if (canPlay && t.activeSlot >= 0 && t.loadedCount > 0) {
 				SampleSlot& slot = t.slots[t.activeSlot];
 				if (!slot.data.empty() && (size_t) t.playPos < slot.data.size()) {
 					size_t i0 = (size_t) t.playPos;
@@ -360,13 +409,36 @@ struct Beams : Module {
 // ---------------------------------------------------------------------
 // Widgets
 // ---------------------------------------------------------------------
+// NOTE on units: NanoVG draws in pixels, but the panel is laid out in
+// mm. Every fixed metric below goes through mm() so strokes/radii/dot
+// pitches match the printed guides (an earlier version used raw mm
+// numbers as pixels, which made dots/strokes ~3x too small).
+static float mm(float v) {
+	return mm2px(Vec(v, 0.f)).x;
+}
+
+// Places a widget by its CENTER with an explicit size. Sizes are set
+// BEFORE positioning: createParamCentered() centers using the box size
+// at creation time, which is zero for these custom widgets, so
+// anything resized afterwards ended up offset by half its size.
+template <class T>
+static T* placeParam(Module* module, int paramId, float cxMm, float cyMm, float wMm, float hMm) {
+	T* w = createParam<T>(Vec(), module, paramId);
+	w->box.size = mm2px(Vec(wMm, hMm));
+	w->box.pos = mm2px(Vec(cxMm, cyMm)).minus(w->box.size.div(2.f));
+	return w;
+}
 
 // Generic rotary knob, fully custom-drawn (no SVG knob asset) -- same
 // approach as StellarKnob/MorphKnob/IntelKnob elsewhere in the family.
-// One reusable class covers both TEMPO (bigger radius) and the dense
-// per-track knobs (smaller radius), sized per-instance via box.size.
+// Sized per-instance via box.size; the ring is drawn so its OUTER edge
+// lands exactly on the printed guide ring.
 struct BeamsKnob : ParamWidget {
 	NVGcolor ringColor = nvgRGB(0x4A, 0x44, 0x38);
+
+	BeamsKnob() {
+		box.size = mm2px(Vec(4.6f, 4.6f));
+	}
 
 	void draw(const DrawArgs& args) override {
 		float r = box.size.x / 2.f;
@@ -376,25 +448,25 @@ struct BeamsKnob : ParamWidget {
 		float minV = pq ? pq->getMinValue() : 0.f;
 		float maxV = pq ? pq->getMaxValue() : 1.f;
 		float norm = (maxV > minV) ? clamp((value - minV) / (maxV - minV), 0.f, 1.f) : 0.f;
+		float sw = mm(0.45f);
 
 		nvgBeginPath(args.vg);
-		nvgCircle(args.vg, cx, cy, r * 0.82f);
+		nvgCircle(args.vg, cx, cy, r - sw / 2.f);
 		nvgFillColor(args.vg, nvgRGB(0xED, 0xE7, 0xDC));
 		nvgFill(args.vg);
 		nvgStrokeColor(args.vg, ringColor);
-		nvgStrokeWidth(args.vg, r * 0.14f);
+		nvgStrokeWidth(args.vg, sw);
 		nvgStroke(args.vg);
 
 		// Pointer -- same -0.75pi..+0.75pi convention as the rest of the
 		// family's knobs (MorphKnob/Trimpot/etc).
 		float angle = -0.75f * (float)M_PI + norm * 1.5f * (float)M_PI;
-		float px = cx + std::sin(angle) * r * 0.75f;
-		float py = cy - std::cos(angle) * r * 0.75f;
+		float pr = r - sw - mm(0.3f);
 		nvgBeginPath(args.vg);
-		nvgMoveTo(args.vg, cx, cy);
-		nvgLineTo(args.vg, px, py);
+		nvgMoveTo(args.vg, cx + std::sin(angle) * pr * 0.25f, cy - std::cos(angle) * pr * 0.25f);
+		nvgLineTo(args.vg, cx + std::sin(angle) * pr, cy - std::cos(angle) * pr);
 		nvgStrokeColor(args.vg, nvgRGB(0x2A, 0x26, 0x20));
-		nvgStrokeWidth(args.vg, r * 0.18f);
+		nvgStrokeWidth(args.vg, mm(0.5f));
 		nvgLineCap(args.vg, NVG_ROUND);
 		nvgStroke(args.vg);
 	}
@@ -421,13 +493,17 @@ struct BeamsKnob : ParamWidget {
 // text (the static panel guide just says "SEQ" always), same font-glyph
 // drawing convention as Command's SquareButton.
 struct RRModeButton : ParamWidget {
+	RRModeButton() {
+		box.size = mm2px(Vec(5.77f, 3.8f));
+	}
 	void draw(const DrawArgs& args) override {
+		float sw = mm(0.4f);
 		nvgBeginPath(args.vg);
-		nvgRoundedRect(args.vg, 0, 0, box.size.x, box.size.y, 1.0f);
+		nvgRoundedRect(args.vg, sw / 2.f, sw / 2.f, box.size.x - sw, box.size.y - sw, mm(0.5f));
 		nvgFillColor(args.vg, nvgRGB(0xED, 0xE7, 0xDC));
 		nvgFill(args.vg);
 		nvgStrokeColor(args.vg, nvgRGB(0x4A, 0x44, 0x38));
-		nvgStrokeWidth(args.vg, 0.4f * box.size.y / 3.8f);
+		nvgStrokeWidth(args.vg, sw);
 		nvgStroke(args.vg);
 
 		ParamQuantity* pq = getParamQuantity();
@@ -435,10 +511,10 @@ struct RRModeButton : ParamWidget {
 		std::shared_ptr<Font> font = APP->window->loadFont(asset::system("res/fonts/DejaVuSans.ttf"));
 		if (font && font->handle >= 0) {
 			nvgFontFaceId(args.vg, font->handle);
-			nvgFontSize(args.vg, box.size.y * 0.5f);
+			nvgFontSize(args.vg, mm(1.5f));
 			nvgTextAlign(args.vg, NVG_ALIGN_CENTER | NVG_ALIGN_MIDDLE);
-			nvgFillColor(args.vg, nvgRGB(0x2A, 0x26, 0x20));
-			nvgText(args.vg, box.size.x / 2.f, box.size.y / 2.f + 0.3f, rnd ? "RND" : "SEQ", NULL);
+			nvgFillColor(args.vg, nvgRGB(0x4A, 0x44, 0x38));
+			nvgText(args.vg, box.size.x / 2.f, box.size.y / 2.f, rnd ? "RND" : "SEQ", NULL);
 		}
 	}
 	void onButton(const ButtonEvent& e) override {
@@ -456,17 +532,32 @@ struct RRModeButton : ParamWidget {
 struct FillToggleButton : ParamWidget {
 	NVGcolor onColor = nvgRGB(0x8A, 0x64, 0x23);
 
+	FillToggleButton() {
+		box.size = mm2px(Vec(7.88f, 3.6f));
+	}
 	void draw(const DrawArgs& args) override {
 		ParamQuantity* pq = getParamQuantity();
 		bool on = pq && pq->getValue() > 0.5f;
+		float sw = mm(0.4f);
 		nvgBeginPath(args.vg);
-		nvgRoundedRect(args.vg, 0, 0, box.size.x, box.size.y, 0.8f);
+		nvgRoundedRect(args.vg, sw / 2.f, sw / 2.f, box.size.x - sw, box.size.y - sw, mm(0.4f));
 		nvgFillColor(args.vg, on ? onColor : nvgRGB(0xED, 0xE7, 0xDC));
 		nvgFill(args.vg);
 		nvgStrokeColor(args.vg, nvgRGB(0x4A, 0x44, 0x38));
-		nvgStrokeWidth(args.vg, 0.35f);
+		nvgStrokeWidth(args.vg, sw);
 		nvgStroke(args.vg);
+		// The printed FILL/INV text sits underneath this opaque fill, so
+		// redraw it here in a color that reads on both states.
+		std::shared_ptr<Font> font = APP->window->loadFont(asset::system("res/fonts/DejaVuSans.ttf"));
+		if (font && font->handle >= 0) {
+			nvgFontFaceId(args.vg, font->handle);
+			nvgFontSize(args.vg, mm(1.3f));
+			nvgTextAlign(args.vg, NVG_ALIGN_CENTER | NVG_ALIGN_MIDDLE);
+			nvgFillColor(args.vg, on ? nvgRGB(0xF5, 0xF1, 0xE9) : nvgRGB(0x2E, 0x28, 0x1F));
+			nvgText(args.vg, box.size.x / 2.f, box.size.y / 2.f, label, NULL);
+		}
 	}
+	const char* label = "FILL";
 	void onButton(const ButtonEvent& e) override {
 		if (e.action == GLFW_PRESS && e.button == GLFW_MOUSE_BUTTON_LEFT) {
 			ParamQuantity* pq = getParamQuantity();
@@ -483,18 +574,22 @@ struct LoadButton : OpaqueWidget {
 	Beams* module = nullptr;
 	int track = 0;
 
+	LoadButton() {
+		box.size = mm2px(Vec(16.96f, 4.2f));
+	}
 	void draw(const DrawArgs& args) override {
+		float sw = mm(0.4f);
 		nvgBeginPath(args.vg);
-		nvgRoundedRect(args.vg, 0, 0, box.size.x, box.size.y, 1.2f);
+		nvgRoundedRect(args.vg, sw / 2.f, sw / 2.f, box.size.x - sw, box.size.y - sw, mm(0.6f));
 		nvgFillColor(args.vg, nvgRGB(0xED, 0xE7, 0xDC));
 		nvgFill(args.vg);
 		nvgStrokeColor(args.vg, nvgRGB(0x4A, 0x44, 0x38));
-		nvgStrokeWidth(args.vg, 0.4f);
+		nvgStrokeWidth(args.vg, sw);
 		nvgStroke(args.vg);
 		std::shared_ptr<Font> font = APP->window->loadFont(asset::system("res/fonts/DejaVuSans.ttf"));
 		if (font && font->handle >= 0) {
 			nvgFontFaceId(args.vg, font->handle);
-			nvgFontSize(args.vg, box.size.y * 0.42f);
+			nvgFontSize(args.vg, mm(1.6f));
 			nvgTextAlign(args.vg, NVG_ALIGN_CENTER | NVG_ALIGN_MIDDLE);
 			nvgFillColor(args.vg, nvgRGB(0x4A, 0x44, 0x38));
 			nvgText(args.vg, box.size.x / 2.f, box.size.y / 2.f, "LOAD", NULL);
@@ -506,7 +601,7 @@ struct LoadButton : OpaqueWidget {
 			if (!module) return;
 			char* path = osdialog_file(OSDIALOG_OPEN_DIR, NULL, NULL, NULL);
 			if (path) {
-				module->tracks[track].loadFolder(path, APP->engine->getSampleRate());
+				module->loadTrackFolder(track, path, APP->engine->getSampleRate());
 				free(path);
 			}
 		}
@@ -514,33 +609,53 @@ struct LoadButton : OpaqueWidget {
 };
 
 // Round-robin dot readout -- 4 dots, fixed identity colors (reusing
-// Intel's FX quartet), filled when that slot has a sample loaded.
+// Intel's FX quartet), filled when that slot has a sample loaded. The
+// widget box is the printed readout rectangle itself, so the dots land
+// exactly on the guide dots (first dot 1.4mm in, 2.33mm pitch).
 struct RRDotsWidget : Widget {
 	Beams* module = nullptr;
 	int track = 0;
-	float pitch = 2.33f;
 	static constexpr int N = 4;
 	NVGcolor colors[N] = {
 		nvgRGB(0x8A, 0x64, 0x23), nvgRGB(0x8A, 0x2A, 0x2A),
 		nvgRGB(0x2E, 0x4A, 0x6E), nvgRGB(0x6B, 0x4C, 0x8A),
 	};
 
+	RRDotsWidget() {
+		box.size = mm2px(Vec(9.79f, 5.2f));
+	}
 	void draw(const DrawArgs& args) override {
 		int loaded = module ? module->tracks[track].loadedCount : 0;
+		// Slot that played most recently -- this is the round-robin
+		// position indicator: it steps along the dots on every hit (in
+		// SEQ order, or jumping around in RND), so you can see the
+		// rotation working. Loaded-but-idle dots are dimmer.
+		int current = module ? module->tracks[track].lastPlayed : -1;
 		float cy = box.size.y / 2.f;
-		float x0 = box.size.x / 2.f - pitch * 1.5f;
+		float pitch = mm(2.33f);
 		for (int d = 0; d < N; d++) {
-			float dx = x0 + d * pitch;
-			bool lit = d < loaded;
+			float dx = mm(1.4f) + d * pitch;
+			bool isLoaded = d < loaded;
+			bool isCurrent = isLoaded && d == current;
 			nvgBeginPath(args.vg);
-			nvgCircle(args.vg, dx, cy, 0.6f);
-			if (lit) {
-				nvgFillColor(args.vg, colors[d]);
+			nvgCircle(args.vg, dx, cy, mm(0.6f));
+			if (isLoaded) {
+				NVGcolor c = colors[d];
+				if (!isCurrent) c.a = 0.35f;
+				nvgFillColor(args.vg, c);
 				nvgFill(args.vg);
 			}
 			nvgStrokeColor(args.vg, colors[d]);
-			nvgStrokeWidth(args.vg, 0.35f);
+			nvgStrokeWidth(args.vg, mm(0.35f));
 			nvgStroke(args.vg);
+			if (isCurrent) {
+				// Emphasis ring around the active slot.
+				nvgBeginPath(args.vg);
+				nvgCircle(args.vg, dx, cy, mm(1.0f));
+				nvgStrokeColor(args.vg, colors[d]);
+				nvgStrokeWidth(args.vg, mm(0.25f));
+				nvgStroke(args.vg);
+			}
 		}
 	}
 };
@@ -555,21 +670,17 @@ struct BeamsWidget : ModuleWidget {
 
 		// --- I/O row ---
 		addInput(createInputCentered<PJ301MPort>(mm2px(Vec(22.67, 18.3)), module, Beams::CLOCK_INPUT));
-		{
-			auto* k = createParamCentered<BeamsKnob>(mm2px(Vec(39.43, 18.3)), module, Beams::TEMPO_PARAM);
-			k->box.size = mm2px(Vec(7.2, 7.2));
-			addParam(k);
-		}
+		addParam(placeParam<BeamsKnob>(module, Beams::TEMPO_PARAM, 39.43f, 18.3f, 5.6f, 5.6f));
 		addOutput(createOutputCentered<PJ301MPort>(mm2px(Vec(56.2, 18.3)), module, Beams::MASTER_L_OUTPUT));
 		addOutput(createOutputCentered<PJ301MPort>(mm2px(Vec(73.77, 18.3)), module, Beams::MASTER_R_OUTPUT));
 
-		// --- Per-track controls -- coordinates match beams_layout.json
-		// exactly (generated by beams_layout.py), so the widgets and the
-		// printed panel can't drift apart from each other. ---
+		// --- Per-track controls -- coordinates and sizes match
+		// beams_layout.json exactly (generated by beams_layout.py), so
+		// the widgets and the printed panel can't drift apart. ---
 		static const float trigX[4] = {19.18f, 38.54f, 57.90f, 77.26f};
 		static const float trigY = 40.11f;
 		static const float toggleX[4] = {13.58f, 32.94f, 52.30f, 71.66f};
-		static const float dotsX[4] = {19.27f, 38.63f, 57.99f, 77.35f};
+		static const float dotsBoxX[4] = {17.87f, 37.23f, 56.59f, 75.95f};  // left edge of the printed readout box
 		static const float rowY = 53.51f;
 		static const float loadX[4] = {19.18f, 38.54f, 57.90f, 77.26f};
 		static const float loadY = 64.51f;
@@ -581,63 +692,46 @@ struct BeamsWidget : ModuleWidget {
 		static const float fillX[4] = {14.64f, 34.00f, 53.36f, 72.72f};
 		static const float invX[4] = {23.72f, 43.08f, 62.44f, 81.80f};
 		static const float fillY = 96.71f;
-		static const int levelP[4] = {Beams::LEVEL_PARAM + 0, Beams::LEVEL_PARAM + 1, Beams::LEVEL_PARAM + 2, Beams::LEVEL_PARAM + 3};
-		static const int tuneP[4] = {Beams::TUNE_PARAM + 0, Beams::TUNE_PARAM + 1, Beams::TUNE_PARAM + 2, Beams::TUNE_PARAM + 3};
-		static const int decayP[4] = {Beams::DECAY_PARAM + 0, Beams::DECAY_PARAM + 1, Beams::DECAY_PARAM + 2, Beams::DECAY_PARAM + 3};
-		static const int lenP[4] = {Beams::LEN_PARAM + 0, Beams::LEN_PARAM + 1, Beams::LEN_PARAM + 2, Beams::LEN_PARAM + 3};
-		static const int stepsP[4] = {Beams::STEPS_PARAM + 0, Beams::STEPS_PARAM + 1, Beams::STEPS_PARAM + 2, Beams::STEPS_PARAM + 3};
-		static const int rotP[4] = {Beams::ROT_PARAM + 0, Beams::ROT_PARAM + 1, Beams::ROT_PARAM + 2, Beams::ROT_PARAM + 3};
 
 		for (int i = 0; i < 4; i++) {
 			addInput(createInputCentered<PJ301MPort>(mm2px(Vec(trigX[i], trigY)), module, Beams::TRIG_INPUT + i));
 
-			auto* rr = createParamCentered<RRModeButton>(mm2px(Vec(toggleX[i], rowY)), module, Beams::RRMODE_PARAM + i);
-			rr->box.size = mm2px(Vec(9.0, 3.8));
-			addParam(rr);
+			addParam(placeParam<RRModeButton>(module, Beams::RRMODE_PARAM + i, toggleX[i], rowY, 5.77f, 3.8f));
 
 			auto* dots = new RRDotsWidget();
 			dots->module = module;
 			dots->track = i;
-			dots->box.size = mm2px(Vec(10.6, 5.2));
-			dots->box.pos = mm2px(Vec(dotsX[i], rowY)).minus(dots->box.size.div(2));
+			dots->box.pos = mm2px(Vec(dotsBoxX[i], rowY - 2.6f));
 			addChild(dots);
 
 			auto* load = new LoadButton();
 			load->module = module;
 			load->track = i;
-			load->box.size = mm2px(Vec(14.9, 4.2));
-			load->box.pos = mm2px(Vec(loadX[i], loadY)).minus(load->box.size.div(2));
+			load->box.pos = mm2px(Vec(loadX[i], loadY)).minus(load->box.size.div(2.f));
 			addChild(load);
 
-			auto* kLevel = createParamCentered<BeamsKnob>(mm2px(Vec(knobXLo[i], knobRow1Y)), module, levelP[i]);
-			kLevel->box.size = mm2px(Vec(3.6, 3.6));
-			addParam(kLevel);
-			auto* kTune = createParamCentered<BeamsKnob>(mm2px(Vec(knobXMid[i], knobRow1Y)), module, tuneP[i]);
-			kTune->box.size = mm2px(Vec(3.6, 3.6));
-			addParam(kTune);
-			auto* kDecay = createParamCentered<BeamsKnob>(mm2px(Vec(knobXHi[i], knobRow1Y)), module, decayP[i]);
-			kDecay->box.size = mm2px(Vec(3.6, 3.6));
+			addParam(placeParam<BeamsKnob>(module, Beams::LEVEL_PARAM + i, knobXLo[i], knobRow1Y, 4.6f, 4.6f));
+			addParam(placeParam<BeamsKnob>(module, Beams::TUNE_PARAM + i, knobXMid[i], knobRow1Y, 4.6f, 4.6f));
+			auto* kDecay = placeParam<BeamsKnob>(module, Beams::DECAY_PARAM + i, knobXHi[i], knobRow1Y, 4.6f, 4.6f);
 			kDecay->ringColor = nvgRGB(0x8A, 0x2A, 0x2A);
 			addParam(kDecay);
 
-			auto* kLen = createParamCentered<BeamsKnob>(mm2px(Vec(knobXLo[i], knobRow2Y)), module, lenP[i]);
-			kLen->box.size = mm2px(Vec(3.6, 3.6));
-			kLen->ringColor = nvgRGB(0x8A, 0x64, 0x23);
+			const NVGcolor brass = nvgRGB(0x8A, 0x64, 0x23);
+			auto* kLen = placeParam<BeamsKnob>(module, Beams::LEN_PARAM + i, knobXLo[i], knobRow2Y, 4.6f, 4.6f);
+			kLen->ringColor = brass;
 			addParam(kLen);
-			auto* kSteps = createParamCentered<BeamsKnob>(mm2px(Vec(knobXMid[i], knobRow2Y)), module, stepsP[i]);
-			kSteps->box.size = mm2px(Vec(3.6, 3.6));
-			kSteps->ringColor = nvgRGB(0x8A, 0x64, 0x23);
+			auto* kSteps = placeParam<BeamsKnob>(module, Beams::STEPS_PARAM + i, knobXMid[i], knobRow2Y, 4.6f, 4.6f);
+			kSteps->ringColor = brass;
 			addParam(kSteps);
-			auto* kRot = createParamCentered<BeamsKnob>(mm2px(Vec(knobXHi[i], knobRow2Y)), module, rotP[i]);
-			kRot->box.size = mm2px(Vec(3.6, 3.6));
-			kRot->ringColor = nvgRGB(0x8A, 0x64, 0x23);
+			auto* kRot = placeParam<BeamsKnob>(module, Beams::ROT_PARAM + i, knobXHi[i], knobRow2Y, 4.6f, 4.6f);
+			kRot->ringColor = brass;
 			addParam(kRot);
 
-			auto* fill = createParamCentered<FillToggleButton>(mm2px(Vec(fillX[i], fillY)), module, Beams::FILL_PARAM + i);
-			fill->box.size = mm2px(Vec(4.2, 3.6));
+			auto* fill = placeParam<FillToggleButton>(module, Beams::FILL_PARAM + i, fillX[i], fillY, 7.88f, 3.6f);
+			fill->label = "FILL";
 			addParam(fill);
-			auto* inv = createParamCentered<FillToggleButton>(mm2px(Vec(invX[i], fillY)), module, Beams::INV_PARAM + i);
-			inv->box.size = mm2px(Vec(4.2, 3.6));
+			auto* inv = placeParam<FillToggleButton>(module, Beams::INV_PARAM + i, invX[i], fillY, 7.88f, 3.6f);
+			inv->label = "INV";
 			inv->onColor = nvgRGB(0x8A, 0x2A, 0x2A);
 			addParam(inv);
 		}

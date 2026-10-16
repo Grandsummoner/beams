@@ -176,10 +176,13 @@ for i, nm in enumerate(io_names):
         add(f'<circle cx="{cx_i:.3f}" cy="{jack_y:.3f}" r="{knob_half:.3f}" fill="none" stroke="{BORDER}" stroke-width="0.5" opacity="0.55"/>')
         add(f'<circle cx="{cx_i:.3f}" cy="{jack_y:.3f}" r="{R["knob"]:.3f}" fill="{BG2}" stroke="{TEXT_DIM}" stroke-width="0.35"/>')
     else:
-        add(f'<circle cx="{cx_i:.3f}" cy="{jack_y:.3f}" r="{R["port"]:.3f}" fill="#3A3630" stroke="{BORDER}" stroke-width="0.6"/>')
-        add(f'<circle cx="{cx_i:.3f}" cy="{jack_y:.3f}" r="{R["port"]*0.55:.3f}" fill="#111"/>')
+        # Family nomenclature (same rule as Intel/Stellar): input rings
+        # NAVY, output rings BRASS, drawn as a ring only -- the real jack
+        # widget sits inside it.
+        rc = NAVY if nm == "CLOCK" else BRASS
+        add(f'<circle cx="{cx_i:.3f}" cy="{jack_y:.3f}" r="{R["port"]+0.3:.3f}" fill="none" stroke="{rc}" stroke-width="1.6" opacity="0.55"/>')
     micro(nm, cx_i, label_y, size=1.3)
-    layout["io"].append({"name": nm, "x": round(cx_i, 2), "y": round(jack_y, 2)})
+    layout["io"].append({"name": nm, "x": round(cx_i, 2), "y": round(jack_y, 2), "r": (R["knob"] if nm == "TEMPO" else R["port"])})
 y += io_h + GAP
 
 # ---------------------------------------------------------------------
@@ -252,8 +255,7 @@ for i in range(4):
         add(f'<line x1="{dx:.3f}" y1="{ty+0.8:.3f}" x2="{dx:.3f}" y2="{ty+th-0.8:.3f}" stroke="{BORDER}" stroke-width="0.3" opacity="0.5"/>')
 
     # TRIG input
-    add(f'<circle cx="{cx:.3f}" cy="{trig_y:.3f}" r="{R["port"]:.3f}" fill="#3A3630" stroke="{BORDER}" stroke-width="0.6"/>')
-    add(f'<circle cx="{cx:.3f}" cy="{trig_y:.3f}" r="{R["port"]*0.55:.3f}" fill="#111"/>')
+    add(f'<circle cx="{cx:.3f}" cy="{trig_y:.3f}" r="{R["port"]+0.3:.3f}" fill="none" stroke="{NAVY}" stroke-width="1.6" opacity="0.55"/>')  # input -> NAVY ring
     micro("TRIG", cx, trig_label_y, size=1.3)
     track = {"index": i, "trig": {"x": round(cx, 2), "y": round(trig_y, 2)}}
 
@@ -276,19 +278,18 @@ for i in range(4):
     dot_gap = (disp_w - 2*1.4) / max(1, ndots-1)
     for d in range(ndots):
         ddx = disp_x0 + 1.4 + d*dot_gap
-        lit = (d == 0)
         col = dot_colors[d]
-        add(f'<circle cx="{ddx:.3f}" cy="{sample_y:.3f}" r="{dot_r:.3f}" fill="{col if lit else "none"}" stroke="{col}" stroke-width="0.35"/>')
+        add(f'<circle cx="{ddx:.3f}" cy="{sample_y:.3f}" r="{dot_r:.3f}" fill="none" stroke="{col}" stroke-width="0.35"/>')
     micro("ROUND ROBIN", cx, sample_label_y, size=1.1)
-    track["rr_toggle"] = {"x": round(ix0+toggle_w/2, 2), "y": round(sample_y, 2)}
-    track["rr_dots"] = {"x": round(disp_x0+1.4, 2), "y": round(sample_y, 2), "pitch": round(dot_gap, 2), "count": ndots}
+    track["rr_toggle"] = {"x": round(ix0+toggle_w/2, 2), "y": round(sample_y, 2), "w": round(toggle_w, 2), "h": 3.8}
+    track["rr_dots"] = {"x": round(disp_x0+1.4, 2), "y": round(sample_y, 2), "pitch": round(dot_gap, 2), "count": ndots, "box_x": round(disp_x0, 2), "box_w": round(disp_w, 2), "box_h": 5.2, "dot_r": dot_r, "pad": 1.4}
 
     # LOAD -- now its own full-width row (swapped position with the
     # toggle above), explicit about the 4-file cap.
     add(f'<rect x="{ix0:.3f}" y="{rr_y-2.1:.3f}" width="{inner_w:.3f}" height="4.2" rx="0.6" fill="{BG2}" stroke="{TEXT_DIM}" stroke-width="0.4"/>')
     micro("LOAD", cx, rr_y+0.5, size=1.4, color=TEXT_DIM)
     micro("UP TO 4 SAMPLES", cx, rr_label_y, size=1.1)
-    track["load_btn"] = {"x": round(cx, 2), "y": round(rr_y, 2)}
+    track["load_btn"] = {"x": round(cx, 2), "y": round(rr_y, 2), "w": round(inner_w, 2), "h": 4.2}
 
     # LEVEL / TUNE / DECAY -- one row of 3, evenly spread across the
     # same ix0-ix1 bounds as every other row (dropped a 4th knob, TONE,
@@ -307,7 +308,7 @@ for i in range(4):
         kx = ix0 + R_SMALL + j * ((inner_w - 2*R_SMALL) / 2)
         add(f'<circle cx="{kx:.3f}" cy="{knob_row1_y:.3f}" r="{R_SMALL:.3f}" fill="{BG2}" stroke="{col}" stroke-width="0.4"/>')
         micro(nm, kx, knob_row1_label_y, size=1.0)
-        track["knobs"][nm.lower()] = {"x": round(kx, 2), "y": round(knob_row1_y, 2)}
+        track["knobs"][nm.lower()] = {"x": round(kx, 2), "y": round(knob_row1_y, 2), "r": R_SMALL}
 
     # 3-knob row: LEN / STEPS / ROT -- evenly spread across the same
     # ix0-ix1 bounds (first/last at the edges, middle centered) instead
@@ -316,7 +317,7 @@ for i in range(4):
         kx = ix0 + R_SMALL + j * ((inner_w - 2*R_SMALL) / 2)
         add(f'<circle cx="{kx:.3f}" cy="{knob3_y:.3f}" r="{R_SMALL:.3f}" fill="{BG2}" stroke="{BRASS}" stroke-width="0.4"/>')
         micro(nm, kx, knob3_label_y, size=1.0)
-        track["knobs"][nm.lower()] = {"x": round(kx, 2), "y": round(knob3_y, 2)}
+        track["knobs"][nm.lower()] = {"x": round(kx, 2), "y": round(knob3_y, 2), "r": R_SMALL}
 
     # FILL / INV -- two equal-width buttons splitting the same ix0-ix1
     # span down the middle, rather than fixed-width buttons floating in
@@ -326,8 +327,8 @@ for i in range(4):
     add(f'<rect x="{ix1-half_w:.3f}" y="{fill_y-BTN_SMALL:.3f}" width="{half_w:.3f}" height="{BTN_SMALL*2:.3f}" rx="0.4" fill="{BG2}" stroke="{TEXT_DIM}" stroke-width="0.35"/>')
     micro("FILL", ix0+half_w/2, fill_y+0.4, size=1.1)
     micro("INV", ix1-half_w/2, fill_y+0.4, size=1.1)
-    track["fill_btn"] = {"x": round(ix0+half_w/2, 2), "y": round(fill_y, 2)}
-    track["inv_btn"] = {"x": round(ix1-half_w/2, 2), "y": round(fill_y, 2)}
+    track["fill_btn"] = {"x": round(ix0+half_w/2, 2), "y": round(fill_y, 2), "w": round(half_w, 2), "h": round(BTN_SMALL*2, 2)}
+    track["inv_btn"] = {"x": round(ix1-half_w/2, 2), "y": round(fill_y, 2), "w": round(half_w, 2), "h": round(BTN_SMALL*2, 2)}
 
     layout["tracks"].append(track)
 
