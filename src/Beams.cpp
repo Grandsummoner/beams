@@ -220,6 +220,7 @@ struct Beams : Module {
 	Beams() {
 		config(PARAMS_LEN, INPUTS_LEN, OUTPUTS_LEN, LIGHTS_LEN);
 		configParam(TEMPO_PARAM, 5.f, 400.f, 120.f, "Tempo (master clock when CLOCK is unpatched)", " BPM");
+		paramQuantities[TEMPO_PARAM]->randomizeEnabled = false;   // a random 5-400 BPM is never what you want
 		configInput(CLOCK_INPUT, "Clock");
 		for (int i = 0; i < 4; i++) {
 			configParam(LEVEL_PARAM + i, 0.f, 1.f, 0.8f, string::f("Track %d level", i + 1));
@@ -235,6 +236,8 @@ struct Beams : Module {
 			configSwitch(FILL_PARAM + i, 0.f, 1.f, 0.f, string::f("Track %d fill", i + 1), {"Off", "On"});
 			configSwitch(INV_PARAM + i, 0.f, 1.f, 0.f, string::f("Track %d inverse fill", i + 1), {"Off", "On"});
 			configSwitch(MUTE_PARAM + i, 0.f, 1.f, 0.f, string::f("Track %d mute (silences the track but the pattern keeps running)", i + 1), {"Off", "On"});
+			paramQuantities[MUTE_PARAM + i]->randomizeEnabled = false;   // Randomize must never silence a track
+			paramQuantities[LEVEL_PARAM + i]->randomizeEnabled = false;  // ...or jump the levels
 			configInput(TRIG_INPUT + i, string::f("Track %d trigger", i + 1));
 		}
 		configOutput(MASTER_L_OUTPUT, "Master L");
