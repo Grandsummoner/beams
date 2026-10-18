@@ -213,14 +213,17 @@ knobrow_block_h = 2*R_SMALL + LABEL_GAP + SUBLABEL_H
 knob3_block_h = 2*R_SMALL + LABEL_GAP + SUBLABEL_H
 fill_block_h = fill_row_h + LABEL_GAP + SUBLABEL_H
 
-tracks_h = (TRACK_MARGIN
-            + trig_block_h + TRACK_GAP
-            + sample_block_h + TRACK_GAP
-            + rr_block_h + TRACK_GAP
-            + knobrow_block_h + TRACK_GAP
-            + knob3_block_h + TRACK_GAP
-            + fill_block_h
-            + TRACK_MARGIN)
+# Zero-slack solver (same convention as Intel/Stellar): whatever vertical
+# budget is left after the fixed-size blocks is spread evenly over the 5
+# inter-block gaps and the 2 section margins, so TRACKS ends exactly at
+# the bottom outer margin. Control sizes are untouched -- only spacing grows.
+blocks_h = (trig_block_h + sample_block_h + rr_block_h
+            + knobrow_block_h + knob3_block_h + fill_block_h)
+tracks_h = PANEL_H - OUTER_MARGIN - y
+spacing_unit = (tracks_h - blocks_h) / 7.0   # 5 gaps + 2 margins
+assert spacing_unit >= 1.0, "not enough vertical room"
+TRACK_MARGIN = spacing_unit
+TRACK_GAP = spacing_unit
 
 section("tracks", x0, y, full_w, tracks_h, "TRACKS", color=BRASS, border_color=BRASS)
 tx, ty, tw, th, _ = sections["tracks"]
