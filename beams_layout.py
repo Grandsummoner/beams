@@ -210,6 +210,7 @@ y += io_h + GAP
 #       left  = sound  : LEVEL / TUNE / DECAY
 #       right = rhythm : LEN   / STEPS / ROT
 #   FILL / INV
+#   MUTE (full width, under FILL/INV)
 hdr_cap = CAP * HEADER_SZ
 HDR_BLOCK_H = HDR_GAP + hdr_cap + HDR_GAP            # divider -> text -> next control
 trig_lbl_cap = CAP * TRIG_LABEL_SZ
@@ -220,7 +221,8 @@ trig_block_h = 2*R["port"] + LABEL_GAP + trig_lbl_cap
 sample_block_h = SAMPLE_ROW_H + LABEL_GAP + rr_lbl_cap
 load_block_h = HDR_BLOCK_H + LOAD_H
 knob_rows_h = 3 * (2*R_SMALL + LABEL_GAP + knob_lbl_cap) + 2 * KNOB_ROW_GAP
-fill_block_h = 2*BTN_SMALL
+MUTE_GAP = 1.4
+fill_block_h = 2*BTN_SMALL + MUTE_GAP + 2*BTN_SMALL   # FILL/INV row, then MUTE row
 
 # Zero-slack solver (same convention as Intel/Stellar): the vertical budget
 # left after the fixed-size blocks is spread evenly over the 4 gaps between
@@ -253,6 +255,7 @@ for r_i in range(3):
     knob_ys.append(ky); knob_label_ys.append(kl)
     cursor = kl + KNOB_ROW_GAP
 fill_y = knob_label_ys[-1] + SP + BTN_SMALL
+mute_y = fill_y + BTN_SMALL + MUTE_GAP + BTN_SMALL
 
 # Shared header band across the full TRACKS width (like Intel's "FOR:"
 # headers): dashed divider above, text, then LOAD row.
@@ -320,6 +323,11 @@ for i in range(4):
     track["fill_btn"] = {"x": round(ix0+half_w/2, 2), "y": round(fill_y, 2), "w": round(half_w, 2), "h": round(BTN_SMALL*2, 2)}
     track["inv_btn"] = {"x": round(ix1-half_w/2, 2), "y": round(fill_y, 2), "w": round(half_w, 2), "h": round(BTN_SMALL*2, 2)}
 
+    # MUTE -- full column width, under FILL/INV
+    add(f'<rect x="{ix0:.3f}" y="{mute_y-BTN_SMALL:.3f}" width="{inner_w:.3f}" height="{BTN_SMALL*2:.3f}" rx="0.4" fill="{BG2}" stroke="{TEXT_DIM}" stroke-width="0.35"/>')
+    micro("MUTE", cx, mute_y + CAP*BTN_TEXT_SZ/2, size=BTN_TEXT_SZ)
+    track["mute_btn"] = {"x": round(cx, 2), "y": round(mute_y, 2), "w": round(inner_w, 2), "h": round(BTN_SMALL*2, 2)}
+
     layout["tracks"].append(track)
 
 y += tracks_h
@@ -375,6 +383,8 @@ hpp = [
     _arr("FILL_X", [t["fill_btn"]["x"] for t in T]),
     _arr("INV_X", [t["inv_btn"]["x"] for t in T]),
     f"static const float FILL_Y = {T[0]['fill_btn']['y']:.2f}f, FILL_W = {T[0]['fill_btn']['w']:.2f}f, FILL_H = {T[0]['fill_btn']['h']:.2f}f;",
+    _arr("MUTE_X", [t["mute_btn"]["x"] for t in T]),
+    f"static const float MUTE_Y = {T[0]['mute_btn']['y']:.2f}f, MUTE_W = {T[0]['mute_btn']['w']:.2f}f;",
     "}",
 ]
 open("src/BeamsLayout.hpp", "w").write("\n".join(hpp) + "\n")

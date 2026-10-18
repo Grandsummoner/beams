@@ -123,6 +123,11 @@ struct TrackVoice {
 	std::vector<bool> cachedPattern;
 
 	dsp::SchmittTrigger trigInTrig;
+	// (v3) an external trigger that arrived mid-tick waits here for the next
+	// master clock tick (see the quantize rule in process())
+	bool pendingTrig = false;
+	float pendingVel = 1.f;
+	float muteGain = 1.f;   // smoothed MUTE (~3ms) so muting never clicks
 	std::string folder;   // last folder loaded -- saved in the patch
 	bool rrMode = false;  // false = SEQ, true = RND
 	bool fillOn = false;
@@ -177,6 +182,7 @@ struct Beams : Module {
 		ENUMS(LEVEL_PARAM, 4), ENUMS(TUNE_PARAM, 4), ENUMS(DECAY_PARAM, 4),
 		ENUMS(LEN_PARAM, 4), ENUMS(STEPS_PARAM, 4), ENUMS(ROT_PARAM, 4),
 		ENUMS(RRMODE_PARAM, 4), ENUMS(FILL_PARAM, 4), ENUMS(INV_PARAM, 4),
+		ENUMS(MUTE_PARAM, 4),
 		PARAMS_LEN
 	};
 	enum InputId {
@@ -197,6 +203,13 @@ struct Beams : Module {
 	dsp::SchmittTrigger clockInTrig;
 	float internalPhase = 0.f;
 
+	// Master clock bookkeeping. One "tick" = one 16th-note pulse from the
+	// CLOCK input (if patched) or from TEMPO. tickCounter is also sent to
+	// Intel over the link so Intel's triggers can be exact divisions of it.
+	unsigned int tickCounter = 0;
+	float timeSinceTick = 1e9f;   // seconds since the last tick
+	float tickPeriod = 0.f;       // seconds between ticks (0 = unknown yet)
+
 	// Intel link -- same buffer-ownership convention as Command's own
 	// copy: allocated here, not by Intel, since the sending convention
 	// is "write into the NEIGHBOR's own producer buffer".
@@ -206,7 +219,7 @@ struct Beams : Module {
 
 	Beams() {
 		config(PARAMS_LEN, INPUTS_LEN, OUTPUTS_LEN, LIGHTS_LEN);
-		configParam(TEMPO_PARAM, 5.f, 400.f, 120.f, "Tempo (used only when CLOCK is unpatched)", " BPM");
+		configParam(TEMPO_PARAM, 5.f, 400.f, 120.f, "Tempo (master clock when CLOCK is unpatched)", " BPM");
 		configInput(CLOCK_INPUT, "Clock");
 		for (int i = 0; i < 4; i++) {
 			configParam(LEVEL_PARAM + i, 0.f, 1.f, 0.8f, string::f("Track %d level", i + 1));
@@ -221,6 +234,7 @@ struct Beams : Module {
 			configSwitch(RRMODE_PARAM + i, 0.f, 1.f, 0.f, string::f("Track %d round-robin mode", i + 1), {"Sequential", "Random"});
 			configSwitch(FILL_PARAM + i, 0.f, 1.f, 0.f, string::f("Track %d fill", i + 1), {"Off", "On"});
 			configSwitch(INV_PARAM + i, 0.f, 1.f, 0.f, string::f("Track %d inverse fill", i + 1), {"Off", "On"});
+			configSwitch(MUTE_PARAM + i, 0.f, 1.f, 0.f, string::f("Track %d mute (silences the track but the pattern keeps running)", i + 1), {"Off", "On"});
 			configInput(TRIG_INPUT + i, string::f("Track %d trigger", i + 1));
 		}
 		configOutput(MASTER_L_OUTPUT, "Master L");
@@ -335,6 +349,29 @@ struct Beams : Module {
 			}
 		}
 
+		// Tick bookkeeping + clock link to Intel. Master priority: CLOCK input
+		// if patched, else TEMPO; Intel's trigger RATE is a division of this.
+		timeSinceTick = std::min(timeSinceTick + args.sampleTime, 1e6f);
+		if (pulse) {
+			if (clockPatched) tickPeriod = (timeSinceTick < 5.f) ? timeSinceTick : 0.f;   // measured; a long gap = clock just (re)started, period unknown
+			else tickPeriod = 15.f / std::max(params[TEMPO_PARAM].getValue(), 1.f);
+			timeSinceTick = 0.f;
+			tickCounter++;
+			Module* intelL = intelLinkFind(this, false, "Intel");   // Intel to our left: write into ITS right-side buffer
+			Module* intelR = intelLinkFind(this, true, "Intel");
+			IntelModMessage tmsg;
+			tmsg.beamsTick = tickCounter;
+			tmsg.beamsTickValid = true;
+			if (intelL) {
+				*(IntelModMessage*)intelL->rightExpander.producerMessage = tmsg;
+				intelL->rightExpander.messageFlipRequested = true;
+			}
+			if (intelR) {
+				*(IntelModMessage*)intelR->leftExpander.producerMessage = tmsg;
+				intelR->leftExpander.messageFlipRequested = true;
+			}
+		}
+
 		std::unique_lock<std::mutex> sampleLock(sampleMutex, std::try_to_lock);
 		bool canPlay = sampleLock.owns_lock();  // false only while a freshly loaded kit is being swapped in
 
@@ -353,19 +390,44 @@ struct Beams : Module {
 			// --- Triggering: external TRIG input overrides internal Euclidean ---
 			bool patched = inputs[TRIG_INPUT + i].isConnected();
 			if (patched) {
+				// A patched TRIG replaces this track's own pattern, and is
+				// a division of the master clock: it lands on the tick.
+				//  - Arrives within ~4ms after a tick (Intel's triggers do,
+				//    since Intel fires ON Beams' ticks): play now.
+				//  - Arrives mid-tick (other modules): wait for the next
+				//    tick -- unless that wait would be long (slow clocks,
+				//    ambient tempos), the clock period is unknown, or the
+				//    clock has stalled, in which case play immediately.
 				float v = inputs[TRIG_INPUT + i].getVoltage();
 				if (t.trigInTrig.process(v, 0.1f, 2.f)) {
 					float vel = clamp(v / 10.f, 0.1f, 1.f);
-					if (canPlay) t.trigger(vel);
+					bool playNow = timeSinceTick <= 0.004f
+						|| tickPeriod <= 0.f
+						|| timeSinceTick > 2.f * tickPeriod
+						|| (tickPeriod - timeSinceTick) > 0.25f;
+					if (playNow) { if (canPlay) t.trigger(vel); }
+					else { t.pendingTrig = true; t.pendingVel = vel; }
+				}
+				if (pulse && t.pendingTrig) {
+					t.pendingTrig = false;
+					if (canPlay) t.trigger(t.pendingVel);
 				}
 			}
 			else if (pulse) {
+				t.pendingTrig = false;
 				int len = (int) std::round(params[LEN_PARAM + i].getValue());
 				int steps = (int) std::round(params[STEPS_PARAM + i].getValue());
 				int rot = (int) std::round(params[ROT_PARAM + i].getValue());
 				t.stepCounter = (t.stepCounter + 1) % len;
 				if (t.stepHit(len, steps, rot) && canPlay) t.trigger(1.f);
 			}
+
+			// MUTE: ~3ms fade so toggling never clicks and a muted track never
+			// blips on its next hit (updated every sample, not only while a
+			// voice is sounding). The voice keeps advancing underneath, so
+			// unmuting rejoins the pattern in time.
+			float muteTarget = params[MUTE_PARAM + i].getValue() > 0.5f ? 0.f : 1.f;
+			t.muteGain += (muteTarget - t.muteGain) * std::min(1.f, args.sampleTime / 0.003f);
 
 			// --- Playback: resampled (TUNE) mono read, attack+decay envelope ---
 			float voice = 0.f;
@@ -390,6 +452,7 @@ struct Beams : Module {
 					t.envValue *= decayCoeff;
 
 					voice = s * t.envAttack * t.envValue * t.velocity * params[LEVEL_PARAM + i].getValue();
+					voice *= t.muteGain;
 
 					float tuneSemis = params[TUNE_PARAM + i].getValue() * 12.f;
 					float rateMul = std::pow(2.f, tuneSemis / 12.f);
@@ -761,6 +824,10 @@ struct BeamsWidget : ModuleWidget {
 			inv->label = "INV";
 			inv->onColor = nvgRGB(0xE0, 0x7B, 0x1F);    // orange
 			addParam(inv);
+			auto* mute = placeParam<FillToggleButton>(module, Beams::MUTE_PARAM + i, MUTE_X[i], MUTE_Y, MUTE_W, FILL_H);
+			mute->label = "MUTE";
+			mute->onColor = nvgRGB(0xC0, 0x39, 0x2B);   // red
+			addParam(mute);
 		}
 	}
 };

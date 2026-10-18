@@ -30,6 +30,15 @@ struct IntelModMessage {
 	// DECAY knob, same "generic offset, receiver scales against its own
 	// real range" pattern as the *Offset fields above.
 	float decayOffset = 0.f;
+	// (v6) Beams -> Intel clock link, sent the OTHER way along the same
+	// expander chain: Beams bumps beamsTick once per master clock tick
+	// (its CLOCK input if patched, else its own TEMPO) and Intel derives
+	// its four trigger outputs from those ticks (RATE = every 8th/4th/
+	// 2nd/every tick), so Intel's triggers lock to Beams' grid instead of
+	// free-running. beamsTickValid stays false until Beams has actually
+	// sent one; Intel then falls back to its own free-running SPEED.
+	unsigned int beamsTick = 0;
+	bool beamsTickValid = false;
 	//
 	// This one struct type is reused for BOTH the Intel<->Command link
 	// AND the separate Intel<->Beams link -- they're different message
