@@ -58,10 +58,23 @@ R = {
 # knob/button scale than the rest of the family -- closer to Command's
 # KEY-row Trimpot scale than a standard knob. New to this module, kept
 # local rather than added to the shared convention until proven out.
-R_SMALL = 2.3     # small per-track knob radius -- bumped up twice now
-                  # (1.5 -> 1.8 -> 2.3) once the real vertical budget
-                  # kept showing slack to spend on legibility instead
-BTN_SMALL = 1.8   # small per-track button half-size
+R_SMALL = 3.0     # (v3) per-track knob radius -- now the SAME 6.0mm knob as
+                  # Intel's FX section (IntelKnob, FX_KNOB_DIAM = 6.0), laid
+                  # out 2 columns x 3 rows instead of the old 3-across rows
+BTN_SMALL = 2.3   # per-track FILL/INV button half-height (was 1.8)
+
+# (v3) type sizes (em, mm) -- everything per-track went up
+TRIG_LABEL_SZ = 1.9    # "TRIG n"
+KNOB_LABEL_SZ = 1.7    # LEVEL / TUNE / DECAY / LEN / STEPS / ROT
+RR_LABEL_SZ = 1.6      # "ROUND ROBIN"
+BTN_TEXT_SZ = 1.8      # SMPL / FILL / INV (bold, drawn by the widget too)
+LOAD_TEXT_SZ = 2.6     # LOAD (bold)
+HEADER_SZ = 1.7        # "SELECT UP TO 4 SAMPLES"
+CAP = 0.73             # DejaVu Bold cap-height / em
+HDR_GAP = 1.6          # clear space above/below the header text (mirrored)
+SAMPLE_ROW_H = 5.4     # SMPL button + dots readout row
+LOAD_H = 5.4           # LOAD button height (was 4.2)
+KNOB_ROW_GAP = 1.2     # between one knob's label and the next row's knob
 
 def row_height(r, extra=0.0):
     block_h = extra + 2*r
@@ -181,155 +194,129 @@ for i, nm in enumerate(io_names):
         # widget sits inside it.
         rc = NAVY if nm == "CLOCK" else BRASS
         add(f'<circle cx="{cx_i:.3f}" cy="{jack_y:.3f}" r="{R["port"]+0.3:.3f}" fill="none" stroke="{rc}" stroke-width="1.6" opacity="0.55"/>')
-    micro(nm, cx_i, label_y, size=1.3)
+    micro(nm, cx_i, label_y, size=1.5)
     layout["io"].append({"name": nm, "x": round(cx_i, 2), "y": round(jack_y, 2), "r": (R["knob"] if nm == "TEMPO" else R["port"])})
 y += io_h + GAP
 
 # ---------------------------------------------------------------------
-# TRACKS section -- 4 dense per-track columns
+# TRACKS section -- 4 per-track columns (v3)
 # ---------------------------------------------------------------------
-# Vertical cursor budget within each column (top-to-bottom):
-#   TRIG jack + label
-#   SAMPLE row: LOAD button + dot-row display, side by side
-#   RR toggle + label
-#   2x2 knob grid: LEVEL/TUNE  //  TONE/CHOKE
-#   3-knob row: LEN / STEPS / ROT
-#   FILL / INV row: 2 tiny buttons
-TRACK_MARGIN = 4.0
-TRACK_GAP = 4.0
-sample_row_h = 5.4
-rr_row_h = 4.4
-fill_row_h = 5.0
-SUBLABEL_H = 1.1   # individual per-knob/button label height, small tier
+# Per column, top to bottom:
+#   TRIG input jack + "TRIG n"
+#   SMPL toggle + 4 round-robin dots, "ROUND ROBIN" caption
+#   [shared full-width header: SELECT UP TO 4 SAMPLES]
+#   LOAD (bold, big)
+#   knobs, 2 columns x 3 rows, 6.0mm (Intel FX size):
+#       left  = sound  : LEVEL / TUNE / DECAY
+#       right = rhythm : LEN   / STEPS / ROT
+#   FILL / INV
+hdr_cap = CAP * HEADER_SZ
+HDR_BLOCK_H = HDR_GAP + hdr_cap + HDR_GAP            # divider -> text -> next control
+trig_lbl_cap = CAP * TRIG_LABEL_SZ
+knob_lbl_cap = CAP * KNOB_LABEL_SZ
+rr_lbl_cap = CAP * RR_LABEL_SZ
 
-trig_block_h = 2*R["port"] + LABEL_GAP + 1.3
-sample_block_h = sample_row_h + LABEL_GAP + SUBLABEL_H
-rr_block_h = rr_row_h + LABEL_GAP + SUBLABEL_H
-# 2x2 knob grid: each of the 2 rows gets its OWN label line underneath
-# it (LEVEL/TUNE under row 1, TONE/CHOKE under row 2) -- matches the
-# rest of the family labeling every single knob individually, rather
-# than one shared caption for a whole block.
-knobrow_block_h = 2*R_SMALL + LABEL_GAP + SUBLABEL_H
-knob3_block_h = 2*R_SMALL + LABEL_GAP + SUBLABEL_H
-fill_block_h = fill_row_h + LABEL_GAP + SUBLABEL_H
+trig_block_h = 2*R["port"] + LABEL_GAP + trig_lbl_cap
+sample_block_h = SAMPLE_ROW_H + LABEL_GAP + rr_lbl_cap
+load_block_h = HDR_BLOCK_H + LOAD_H
+knob_rows_h = 3 * (2*R_SMALL + LABEL_GAP + knob_lbl_cap) + 2 * KNOB_ROW_GAP
+fill_block_h = 2*BTN_SMALL
 
-# Zero-slack solver (same convention as Intel/Stellar): whatever vertical
-# budget is left after the fixed-size blocks is spread evenly over the 5
-# inter-block gaps and the 2 section margins, so TRACKS ends exactly at
-# the bottom outer margin. Control sizes are untouched -- only spacing grows.
-blocks_h = (trig_block_h + sample_block_h + rr_block_h
-            + knobrow_block_h + knob3_block_h + fill_block_h)
+# Zero-slack solver (same convention as Intel/Stellar): the vertical budget
+# left after the fixed-size blocks is spread evenly over the 4 gaps between
+# the 5 blocks and the 2 section margins, so TRACKS ends exactly at the
+# bottom outer margin. Control sizes never change -- only the spacing.
+blocks_h = trig_block_h + sample_block_h + load_block_h + knob_rows_h + fill_block_h
 tracks_h = PANEL_H - OUTER_MARGIN - y
-spacing_unit = (tracks_h - blocks_h) / 7.0   # 5 gaps + 2 margins
-assert spacing_unit >= 1.0, "not enough vertical room"
-TRACK_MARGIN = spacing_unit
-TRACK_GAP = spacing_unit
+spacing_unit = (tracks_h - blocks_h) / 6.0
+assert spacing_unit >= 2.0, f"not enough vertical room ({spacing_unit:.2f}mm per gap)"
+SP = spacing_unit
 
 section("tracks", x0, y, full_w, tracks_h, "TRACKS", color=BRASS, border_color=BRASS)
 tx, ty, tw, th, _ = sections["tracks"]
 col_w = tw / 4
 col_pad = 1.2
 
-trig_y = ty + TRACK_MARGIN + R["port"]
-trig_label_y = trig_y + R["port"] + LABEL_GAP + 1.3
-sample_y = trig_label_y + TRACK_GAP + sample_row_h/2
-sample_label_y = sample_y + sample_row_h/2 + LABEL_GAP + SUBLABEL_H
-rr_y = sample_label_y + TRACK_GAP + rr_row_h/2
-rr_label_y = rr_y + rr_row_h/2 + LABEL_GAP + SUBLABEL_H
-knob_row1_y = rr_label_y + TRACK_GAP + R_SMALL
-knob_row1_label_y = knob_row1_y + R_SMALL + LABEL_GAP + SUBLABEL_H
-knob3_y = knob_row1_label_y + TRACK_GAP + R_SMALL
-knob3_label_y = knob3_y + R_SMALL + LABEL_GAP + SUBLABEL_H
-fill_y = knob3_label_y + TRACK_GAP + fill_row_h/2
-fill_label_y = fill_y + fill_row_h/2 + LABEL_GAP + SUBLABEL_H
+trig_y = ty + SP + R["port"]
+trig_label_y = trig_y + R["port"] + LABEL_GAP + trig_lbl_cap
+sample_y = trig_label_y + SP + SAMPLE_ROW_H / 2
+sample_label_y = sample_y + SAMPLE_ROW_H / 2 + LABEL_GAP + rr_lbl_cap
+hdr_div_y = sample_label_y + SP
+hdr_text_y = hdr_div_y + HDR_GAP + hdr_cap
+load_top = hdr_text_y + HDR_GAP
+load_y = load_top + LOAD_H / 2
+knob_ys, knob_label_ys = [], []
+cursor = load_y + LOAD_H / 2 + SP
+for r_i in range(3):
+    ky = cursor + R_SMALL
+    kl = ky + R_SMALL + LABEL_GAP + knob_lbl_cap
+    knob_ys.append(ky); knob_label_ys.append(kl)
+    cursor = kl + KNOB_ROW_GAP
+fill_y = knob_label_ys[-1] + SP + BTN_SMALL
+
+# Shared header band across the full TRACKS width (like Intel's "FOR:"
+# headers): dashed divider above, text, then LOAD row.
+add(f'<line x1="{tx+col_pad:.3f}" y1="{hdr_div_y:.3f}" x2="{tx+tw-col_pad:.3f}" y2="{hdr_div_y:.3f}" stroke="{BORDER}" stroke-width="0.25" stroke-dasharray="0.6,0.6" opacity="0.6"/>')
+micro("SELECT UP TO 4 SAMPLES", tx + tw/2, hdr_text_y, color=TEXT_DIM, size=HEADER_SZ)
+
+SOUND = [("LEVEL", TEXT_DIM), ("TUNE", TEXT_DIM), ("DECAY", MAROON)]
+RHYTHM = [("LEN", BRASS), ("STEPS", BRASS), ("ROT", BRASS)]
 
 for i in range(4):
     cx = tx + col_w*(i+0.5)
-    # Common left/right bounds every row in this column aligns to --
-    # the fix for the "evenly fill across" ask: every row below now
-    # spans exactly ix0-to-ix1, instead of each row inventing its own
-    # margin (the old SAMPLE row was left-packed while the knob rows
-    # were center-symmetric -- a real inconsistency, not a style choice).
     ix0 = cx - col_w/2 + col_pad
     ix1 = cx + col_w/2 - col_pad
     inner_w = ix1 - ix0
     if i > 0:
         dx = tx + col_w*i
-        add(f'<line x1="{dx:.3f}" y1="{ty+0.8:.3f}" x2="{dx:.3f}" y2="{ty+th-0.8:.3f}" stroke="{BORDER}" stroke-width="0.3" opacity="0.5"/>')
+        # vertical dividers skip the header band so they never cut the text
+        for (y1, y2) in [(ty+0.8, hdr_div_y-0.3), (load_top-0.4, ty+th-0.8)]:
+            add(f'<line x1="{dx:.3f}" y1="{y1:.3f}" x2="{dx:.3f}" y2="{y2:.3f}" stroke="{BORDER}" stroke-width="0.3" opacity="0.5"/>')
 
-    # TRIG input
-    add(f'<circle cx="{cx:.3f}" cy="{trig_y:.3f}" r="{R["port"]+0.3:.3f}" fill="none" stroke="{NAVY}" stroke-width="1.6" opacity="0.55"/>')  # input -> NAVY ring
-    micro("TRIG", cx, trig_label_y, size=1.3)
+    # TRIG input -- input ring NAVY, labelled "TRIG 1".."TRIG 4"
+    add(f'<circle cx="{cx:.3f}" cy="{trig_y:.3f}" r="{R["port"]+0.3:.3f}" fill="none" stroke="{NAVY}" stroke-width="1.6" opacity="0.55"/>')
+    micro(f"TRIG {i+1}", cx, trig_label_y, color=TEXT_BRIGHT, size=TRIG_LABEL_SZ)
     track = {"index": i, "trig": {"x": round(cx, 2), "y": round(trig_y, 2)}}
 
-    # SAMPLE row: SEQ/RND toggle (left) + the 4 round-robin dots (right)
-    # -- grouped together since the toggle directly controls how the
-    # dots cycle, swapped out of LOAD's old spot per direct feedback.
-    # Dots are capped at exactly 4 now (matches the fixed 4-file load
-    # limit below), each with its own fixed identity color reusing the
-    # same brass/maroon/navy/plum quartet as Intel's FX buttons and
-    # Command's depth gauges -- same family thread a third time.
-    toggle_w = inner_w * 0.34
-    add(f'<rect x="{ix0:.3f}" y="{sample_y-1.9:.3f}" width="{toggle_w:.3f}" height="3.8" rx="0.5" fill="{BG2}" stroke="{TEXT_DIM}" stroke-width="0.4"/>')
-    micro("SEQ", ix0+toggle_w/2, sample_y+0.5, size=1.2, color=TEXT_DIM)
-    disp_x0 = ix0 + toggle_w + 1.4
+    # SMPL toggle (left) + the 4 round-robin dots (right).
+    toggle_w = inner_w * 0.42
+    toggle_h = 4.4
+    add(f'<rect x="{ix0:.3f}" y="{sample_y-toggle_h/2:.3f}" width="{toggle_w:.3f}" height="{toggle_h:.3f}" rx="0.5" fill="{BG2}" stroke="{TEXT_DIM}" stroke-width="0.4"/>')
+    micro("SMPL", ix0+toggle_w/2, sample_y + CAP*BTN_TEXT_SZ/2, size=BTN_TEXT_SZ, color=TEXT_DIM)
+    disp_x0 = ix0 + toggle_w + 1.2
     disp_w = ix1 - disp_x0
-    add(f'<rect x="{disp_x0:.3f}" y="{sample_y-2.6:.3f}" width="{disp_w:.3f}" height="5.2" rx="0.7" fill="#FFFFFF" opacity="0.5" stroke="{BORDER}" stroke-width="0.3"/>')
-    dot_colors = [BRASS, MAROON, NAVY, "#6B4C8A"]  # PLUM, matches Intel's FX quartet
-    ndots = 4
-    dot_r = 0.6
-    dot_gap = (disp_w - 2*1.4) / max(1, ndots-1)
+    add(f'<rect x="{disp_x0:.3f}" y="{sample_y-SAMPLE_ROW_H/2:.3f}" width="{disp_w:.3f}" height="{SAMPLE_ROW_H:.3f}" rx="0.7" fill="#FFFFFF" opacity="0.5" stroke="{BORDER}" stroke-width="0.3"/>')
+    dot_colors = [BRASS, MAROON, NAVY, "#6B4C8A"]  # same quartet as Intel's FX buttons
+    ndots, dot_r, dot_pad = 4, 0.65, 1.2
+    dot_pitch = (disp_w - 2*dot_pad) / (ndots-1)
     for d in range(ndots):
-        ddx = disp_x0 + 1.4 + d*dot_gap
-        col = dot_colors[d]
-        add(f'<circle cx="{ddx:.3f}" cy="{sample_y:.3f}" r="{dot_r:.3f}" fill="none" stroke="{col}" stroke-width="0.35"/>')
-    micro("ROUND ROBIN", cx, sample_label_y, size=1.1)
-    track["rr_toggle"] = {"x": round(ix0+toggle_w/2, 2), "y": round(sample_y, 2), "w": round(toggle_w, 2), "h": 3.8}
-    track["rr_dots"] = {"x": round(disp_x0+1.4, 2), "y": round(sample_y, 2), "pitch": round(dot_gap, 2), "count": ndots, "box_x": round(disp_x0, 2), "box_w": round(disp_w, 2), "box_h": 5.2, "dot_r": dot_r, "pad": 1.4}
+        ddx = disp_x0 + dot_pad + d*dot_pitch
+        add(f'<circle cx="{ddx:.3f}" cy="{sample_y:.3f}" r="{dot_r:.3f}" fill="none" stroke="{dot_colors[d]}" stroke-width="0.35"/>')
+    micro("ROUND ROBIN", cx, sample_label_y, size=RR_LABEL_SZ)
+    track["rr_toggle"] = {"x": round(ix0+toggle_w/2, 2), "y": round(sample_y, 2), "w": round(toggle_w, 2), "h": toggle_h}
+    track["rr_dots"] = {"box_x": round(disp_x0, 2), "box_y": round(sample_y-SAMPLE_ROW_H/2, 2), "box_w": round(disp_w, 2), "box_h": SAMPLE_ROW_H,
+                        "pad": dot_pad, "pitch": round(dot_pitch, 3), "dot_r": dot_r, "count": ndots}
 
-    # LOAD -- now its own full-width row (swapped position with the
-    # toggle above), explicit about the 4-file cap.
-    add(f'<rect x="{ix0:.3f}" y="{rr_y-2.1:.3f}" width="{inner_w:.3f}" height="4.2" rx="0.6" fill="{BG2}" stroke="{TEXT_DIM}" stroke-width="0.4"/>')
-    micro("LOAD", cx, rr_y+0.5, size=1.4, color=TEXT_DIM)
-    micro("UP TO 4 SAMPLES", cx, rr_label_y, size=1.1)
-    track["load_btn"] = {"x": round(cx, 2), "y": round(rr_y, 2), "w": round(inner_w, 2), "h": 4.2}
+    # LOAD -- bigger, bold
+    add(f'<rect x="{ix0:.3f}" y="{load_top:.3f}" width="{inner_w:.3f}" height="{LOAD_H:.3f}" rx="0.6" fill="{BG2}" stroke="{TEXT_DIM}" stroke-width="0.4"/>')
+    micro("LOAD", cx, load_y + CAP*LOAD_TEXT_SZ/2, size=LOAD_TEXT_SZ, color=TEXT_DIM)
+    track["load_btn"] = {"x": round(cx, 2), "y": round(load_y, 2), "w": round(inner_w, 2), "h": LOAD_H}
 
-    # LEVEL / TUNE / DECAY -- one row of 3, evenly spread across the
-    # same ix0-ix1 bounds as every other row (dropped a 4th knob, TONE,
-    # per direct feedback -- it was the one unjustified control, added
-    # only to round out a 2x2 grid). DECAY was CHOKE -- same knob, same
-    # slot, upgraded from a hard truncate-point to a real exponential
-    # decay envelope (shapes punch/character, not just length, and
-    # tapers to silence on its own with no separate declick fade
-    # needed). Stays MAROON, not arbitrary: it's the knob Intel's TONE
-    # knob offsets over the link, and TONE lives on Intel's REVERB page,
-    # whose own family color is already MAROON -- the ring inherits
-    # meaning from where the modulation actually comes from, same as
-    # Command's gauge colors inheriting from Intel's FX quartet.
+    # Knobs: 2 columns x 3 rows, left = sound, right = rhythm.
     track["knobs"] = {}
-    for j, (nm, col) in enumerate([("LEVEL", TEXT_DIM), ("TUNE", TEXT_DIM), ("DECAY", MAROON)]):
-        kx = ix0 + R_SMALL + j * ((inner_w - 2*R_SMALL) / 2)
-        add(f'<circle cx="{kx:.3f}" cy="{knob_row1_y:.3f}" r="{R_SMALL:.3f}" fill="{BG2}" stroke="{col}" stroke-width="0.4"/>')
-        micro(nm, kx, knob_row1_label_y, size=1.0)
-        track["knobs"][nm.lower()] = {"x": round(kx, 2), "y": round(knob_row1_y, 2), "r": R_SMALL}
+    kx_left = ix0 + inner_w * 0.25
+    kx_right = ix0 + inner_w * 0.75
+    for row in range(3):
+        for kx, (nm, col) in ((kx_left, SOUND[row]), (kx_right, RHYTHM[row])):
+            add(f'<circle cx="{kx:.3f}" cy="{knob_ys[row]:.3f}" r="{R_SMALL:.3f}" fill="{BG2}" stroke="{col}" stroke-width="0.4"/>')
+            micro(nm, kx, knob_label_ys[row], size=KNOB_LABEL_SZ)
+            track["knobs"][nm.lower()] = {"x": round(kx, 2), "y": round(knob_ys[row], 2), "r": R_SMALL}
 
-    # 3-knob row: LEN / STEPS / ROT -- evenly spread across the same
-    # ix0-ix1 bounds (first/last at the edges, middle centered) instead
-    # of a fixed, narrower pitch that left extra margin unused.
-    for j, nm in enumerate(["LEN", "STEPS", "ROT"]):
-        kx = ix0 + R_SMALL + j * ((inner_w - 2*R_SMALL) / 2)
-        add(f'<circle cx="{kx:.3f}" cy="{knob3_y:.3f}" r="{R_SMALL:.3f}" fill="{BG2}" stroke="{BRASS}" stroke-width="0.4"/>')
-        micro(nm, kx, knob3_label_y, size=1.0)
-        track["knobs"][nm.lower()] = {"x": round(kx, 2), "y": round(knob3_y, 2), "r": R_SMALL}
-
-    # FILL / INV -- two equal-width buttons splitting the same ix0-ix1
-    # span down the middle, rather than fixed-width buttons floating in
-    # the center with unused space on both sides.
+    # FILL / INV -- two equal-width buttons splitting the column span
     half_w = inner_w/2 - 0.6
-    add(f'<rect x="{ix0:.3f}" y="{fill_y-BTN_SMALL:.3f}" width="{half_w:.3f}" height="{BTN_SMALL*2:.3f}" rx="0.4" fill="{BG2}" stroke="{TEXT_DIM}" stroke-width="0.35"/>')
-    add(f'<rect x="{ix1-half_w:.3f}" y="{fill_y-BTN_SMALL:.3f}" width="{half_w:.3f}" height="{BTN_SMALL*2:.3f}" rx="0.4" fill="{BG2}" stroke="{TEXT_DIM}" stroke-width="0.35"/>')
-    micro("FILL", ix0+half_w/2, fill_y+0.4, size=1.1)
-    micro("INV", ix1-half_w/2, fill_y+0.4, size=1.1)
+    for bx, nm in ((ix0 + half_w/2, "FILL"), (ix1 - half_w/2, "INV")):
+        add(f'<rect x="{bx-half_w/2:.3f}" y="{fill_y-BTN_SMALL:.3f}" width="{half_w:.3f}" height="{BTN_SMALL*2:.3f}" rx="0.4" fill="{BG2}" stroke="{TEXT_DIM}" stroke-width="0.35"/>')
+        micro(nm, bx, fill_y + CAP*BTN_TEXT_SZ/2, size=BTN_TEXT_SZ)
     track["fill_btn"] = {"x": round(ix0+half_w/2, 2), "y": round(fill_y, 2), "w": round(half_w, 2), "h": round(BTN_SMALL*2, 2)}
     track["inv_btn"] = {"x": round(ix1-half_w/2, 2), "y": round(fill_y, 2), "w": round(half_w, 2), "h": round(BTN_SMALL*2, 2)}
 
@@ -351,3 +338,44 @@ svg.append('</svg>')
 open("res/Beams.svg", "w").write("\n".join(svg))
 json.dump(layout, open("beams_layout.json", "w"), indent=2)
 print("wrote res/Beams.svg and beams_layout.json")
+
+# ---------------------------------------------------------------------
+# Emit src/BeamsLayout.hpp -- the widget code includes this instead of
+# carrying hand-copied coordinates, so panel art and widgets cannot drift
+# apart (the recurring "coordinate-desync" bug class in this family).
+# ---------------------------------------------------------------------
+def _arr(name, vals):
+    return f"static const float {name}[4] = {{" + ", ".join(f"{v:.2f}f" for v in vals) + "};"
+
+T = layout["tracks"]
+io = {o["name"]: o for o in layout["io"]}
+k0 = T[0]["knobs"]
+hpp = [
+    "// AUTO-GENERATED by beams_layout.py -- do not edit by hand.",
+    "#pragma once",
+    "namespace BeamsLayout {",
+    f"static const float LINK_L_X = {layout['link']['left']['x']:.2f}f, LINK_L_Y = {layout['link']['left']['y']:.2f}f;",
+    f"static const float LINK_R_X = {layout['link']['right']['x']:.2f}f, LINK_R_Y = {layout['link']['right']['y']:.2f}f;",
+    f"static const float IO_Y = {io['CLOCK']['y']:.2f}f;",
+    f"static const float CLOCK_X = {io['CLOCK']['x']:.2f}f, TEMPO_X = {io['TEMPO']['x']:.2f}f, OUTL_X = {io['OUT L']['x']:.2f}f, OUTR_X = {io['OUT R']['x']:.2f}f;",
+    f"static const float TEMPO_SIZE = {2*R['knob']:.2f}f;",
+    _arr("TRIG_X", [t["trig"]["x"] for t in T]),
+    f"static const float TRIG_Y = {T[0]['trig']['y']:.2f}f;",
+    _arr("RR_X", [t["rr_toggle"]["x"] for t in T]),
+    f"static const float RR_Y = {T[0]['rr_toggle']['y']:.2f}f, RR_W = {T[0]['rr_toggle']['w']:.2f}f, RR_H = {T[0]['rr_toggle']['h']:.2f}f;",
+    _arr("DOTS_BOX_X", [t["rr_dots"]["box_x"] for t in T]),
+    f"static const float DOTS_BOX_Y = {T[0]['rr_dots']['box_y']:.2f}f, DOTS_BOX_W = {T[0]['rr_dots']['box_w']:.2f}f, DOTS_BOX_H = {T[0]['rr_dots']['box_h']:.2f}f;",
+    f"static const float DOTS_PAD = {T[0]['rr_dots']['pad']:.2f}f, DOTS_PITCH = {T[0]['rr_dots']['pitch']:.3f}f, DOTS_R = {T[0]['rr_dots']['dot_r']:.2f}f;",
+    _arr("LOAD_X", [t["load_btn"]["x"] for t in T]),
+    f"static const float LOAD_Y = {T[0]['load_btn']['y']:.2f}f, LOAD_W = {T[0]['load_btn']['w']:.2f}f, LOAD_H = {T[0]['load_btn']['h']:.2f}f;",
+    _arr("KNOB_XL", [t["knobs"]["level"]["x"] for t in T]),
+    _arr("KNOB_XR", [t["knobs"]["len"]["x"] for t in T]),
+    f"static const float KNOB_Y[3] = {{{k0['level']['y']:.2f}f, {k0['tune']['y']:.2f}f, {k0['decay']['y']:.2f}f}};",
+    f"static const float KNOB_SIZE = {2*R_SMALL:.2f}f;",
+    _arr("FILL_X", [t["fill_btn"]["x"] for t in T]),
+    _arr("INV_X", [t["inv_btn"]["x"] for t in T]),
+    f"static const float FILL_Y = {T[0]['fill_btn']['y']:.2f}f, FILL_W = {T[0]['fill_btn']['w']:.2f}f, FILL_H = {T[0]['fill_btn']['h']:.2f}f;",
+    "}",
+]
+open("src/BeamsLayout.hpp", "w").write("\n".join(hpp) + "\n")
+print("wrote src/BeamsLayout.hpp")

@@ -1,5 +1,6 @@
 #include "plugin.hpp"
 #include "IntelLink.hpp"
+#include "BeamsLayout.hpp"
 #include <osdialog.h>
 #include <system.hpp>
 #define DR_WAV_IMPLEMENTATION
@@ -8,6 +9,7 @@
 #include <vector>
 #include <string>
 #include <mutex>
+#include <fstream>
 
 // ---------------------------------------------------------------------
 // Euclidean rhythm generator
@@ -204,7 +206,7 @@ struct Beams : Module {
 
 	Beams() {
 		config(PARAMS_LEN, INPUTS_LEN, OUTPUTS_LEN, LIGHTS_LEN);
-		configParam(TEMPO_PARAM, 20.f, 300.f, 120.f, "Tempo (used only when CLOCK is unpatched)", " BPM");
+		configParam(TEMPO_PARAM, 5.f, 400.f, 120.f, "Tempo (used only when CLOCK is unpatched)", " BPM");
 		configInput(CLOCK_INPUT, "Clock");
 		for (int i = 0; i < 4; i++) {
 			configParam(LEVEL_PARAM + i, 0.f, 1.f, 0.8f, string::f("Track %d level", i + 1));
@@ -429,6 +431,46 @@ static T* placeParam(Module* module, int paramId, float cxMm, float cyMm, float 
 	return w;
 }
 
+// Bold text: Rack ships DejaVuSans regular only, so bold is faked by
+// overdrawing the glyphs at tiny offsets. Centered on (x, y).
+static void drawBoldText(NVGcontext* vg, float x, float y, const char* text, float sizeMm, NVGcolor color) {
+	std::shared_ptr<Font> font = APP->window->loadFont(asset::system("res/fonts/DejaVuSans.ttf"));
+	if (!font || font->handle < 0) return;
+	nvgFontFaceId(vg, font->handle);
+	nvgFontSize(vg, mm(sizeMm));
+	nvgTextAlign(vg, NVG_ALIGN_CENTER | NVG_ALIGN_MIDDLE);
+	nvgFillColor(vg, color);
+	float o = mm(0.09f);
+	nvgText(vg, x - o, y, text, NULL);
+	nvgText(vg, x + o, y, text, NULL);
+	nvgText(vg, x, y - o * 0.6f, text, NULL);
+	nvgText(vg, x, y + o * 0.6f, text, NULL);
+	nvgText(vg, x, y, text, NULL);
+}
+
+// Where the LOAD folder dialog opens. Remembered across all four tracks,
+// all Beams instances, and across Rack sessions (stored in Rack's user
+// folder). It is the PARENT of the last folder you picked, so sibling
+// kit folders (kicks / snares / hats ...) are one click away.
+static std::string& browseDir() {
+	static std::string dir;
+	static bool loaded = false;
+	if (!loaded) {
+		loaded = true;
+		std::ifstream f(asset::user("Beams-lastdir.txt"));
+		std::string line;
+		if (f && std::getline(f, line)) dir = line;
+	}
+	return dir;
+}
+static void rememberBrowseDir(const std::string& pickedFolder) {
+	std::string parent = system::getDirectory(pickedFolder);
+	if (parent.empty()) return;
+	browseDir() = parent;
+	std::ofstream f(asset::user("Beams-lastdir.txt"));
+	if (f) f << parent << "\n";
+}
+
 // Generic rotary knob, fully custom-drawn (no SVG knob asset) -- same
 // approach as StellarKnob/MorphKnob/IntelKnob elsewhere in the family.
 // Sized per-instance via box.size; the ring is drawn so its OUTER edge
@@ -437,7 +479,8 @@ struct BeamsKnob : ParamWidget {
 	NVGcolor ringColor = nvgRGB(0x4A, 0x44, 0x38);
 
 	BeamsKnob() {
-		box.size = mm2px(Vec(4.6f, 4.6f));
+		// 6.0mm, same as Intel's FX knobs (BeamsLayout::KNOB_SIZE).
+		box.size = mm2px(Vec(BeamsLayout::KNOB_SIZE, BeamsLayout::KNOB_SIZE));
 	}
 
 	void draw(const DrawArgs& args) override {
@@ -489,33 +532,26 @@ struct BeamsKnob : ParamWidget {
 	}
 };
 
-// SEQ/RND toggle -- the one toggle that needs to draw its own dynamic
-// text (the static panel guide just says "SEQ" always), same font-glyph
-// drawing convention as Command's SquareButton.
+// SMPL toggle: how the track steps through its (up to 4) loaded samples.
+// Unlit = in order (sequential round-robin); lit blue = random order. The
+// label is always "SMPL"; the hover tooltip spells out the mode.
 struct RRModeButton : ParamWidget {
 	RRModeButton() {
-		box.size = mm2px(Vec(5.77f, 3.8f));
+		box.size = mm2px(Vec(BeamsLayout::RR_W, BeamsLayout::RR_H));
 	}
 	void draw(const DrawArgs& args) override {
+		ParamQuantity* pq = getParamQuantity();
+		bool rnd = pq && pq->getValue() > 0.5f;
 		float sw = mm(0.4f);
 		nvgBeginPath(args.vg);
 		nvgRoundedRect(args.vg, sw / 2.f, sw / 2.f, box.size.x - sw, box.size.y - sw, mm(0.5f));
-		nvgFillColor(args.vg, nvgRGB(0xED, 0xE7, 0xDC));
+		nvgFillColor(args.vg, rnd ? nvgRGB(0x3E, 0x7C, 0xB8) : nvgRGB(0xED, 0xE7, 0xDC));
 		nvgFill(args.vg);
-		nvgStrokeColor(args.vg, nvgRGB(0x4A, 0x44, 0x38));
+		nvgStrokeColor(args.vg, rnd ? nvgRGB(0x3E, 0x7C, 0xB8) : nvgRGB(0x4A, 0x44, 0x38));
 		nvgStrokeWidth(args.vg, sw);
 		nvgStroke(args.vg);
-
-		ParamQuantity* pq = getParamQuantity();
-		bool rnd = pq && pq->getValue() > 0.5f;
-		std::shared_ptr<Font> font = APP->window->loadFont(asset::system("res/fonts/DejaVuSans.ttf"));
-		if (font && font->handle >= 0) {
-			nvgFontFaceId(args.vg, font->handle);
-			nvgFontSize(args.vg, mm(1.5f));
-			nvgTextAlign(args.vg, NVG_ALIGN_CENTER | NVG_ALIGN_MIDDLE);
-			nvgFillColor(args.vg, nvgRGB(0x4A, 0x44, 0x38));
-			nvgText(args.vg, box.size.x / 2.f, box.size.y / 2.f, rnd ? "RND" : "SEQ", NULL);
-		}
+		drawBoldText(args.vg, box.size.x / 2.f, box.size.y / 2.f, "SMPL", 1.8f,
+			rnd ? nvgRGB(0xF5, 0xF1, 0xE9) : nvgRGB(0x4A, 0x44, 0x38));
 	}
 	void onButton(const ButtonEvent& e) override {
 		if (e.action == GLFW_PRESS && e.button == GLFW_MOUSE_BUTTON_LEFT) {
@@ -526,38 +562,42 @@ struct RRModeButton : ParamWidget {
 	}
 };
 
-// FILL / INV toggles -- the panel's own static text already labels
-// these, so the widget only needs to show active/inactive state via a
-// filled background, no text of its own.
+// FILL / INV toggles. Each lights in its OWN colour when active (FILL
+// green, INV orange -- no purple), with a soft glow, and carries its own
+// bold label.
 struct FillToggleButton : ParamWidget {
-	NVGcolor onColor = nvgRGB(0x8A, 0x64, 0x23);
+	NVGcolor onColor = nvgRGB(0x24, 0x9A, 0x62);
+	const char* label = "FILL";
 
 	FillToggleButton() {
-		box.size = mm2px(Vec(7.88f, 3.6f));
+		box.size = mm2px(Vec(BeamsLayout::FILL_W, BeamsLayout::FILL_H));
 	}
 	void draw(const DrawArgs& args) override {
 		ParamQuantity* pq = getParamQuantity();
 		bool on = pq && pq->getValue() > 0.5f;
 		float sw = mm(0.4f);
+		if (on) {
+			// glow: two soft halos just outside the button
+			for (int k = 2; k >= 1; k--) {
+				NVGcolor g = onColor;
+				g.a = 0.16f * (3 - k);
+				float grow = mm(0.35f) * k;
+				nvgBeginPath(args.vg);
+				nvgRoundedRect(args.vg, -grow, -grow, box.size.x + 2.f * grow, box.size.y + 2.f * grow, mm(0.4f) + grow);
+				nvgFillColor(args.vg, g);
+				nvgFill(args.vg);
+			}
+		}
 		nvgBeginPath(args.vg);
 		nvgRoundedRect(args.vg, sw / 2.f, sw / 2.f, box.size.x - sw, box.size.y - sw, mm(0.4f));
 		nvgFillColor(args.vg, on ? onColor : nvgRGB(0xED, 0xE7, 0xDC));
 		nvgFill(args.vg);
-		nvgStrokeColor(args.vg, nvgRGB(0x4A, 0x44, 0x38));
+		nvgStrokeColor(args.vg, on ? onColor : nvgRGB(0x4A, 0x44, 0x38));
 		nvgStrokeWidth(args.vg, sw);
 		nvgStroke(args.vg);
-		// The printed FILL/INV text sits underneath this opaque fill, so
-		// redraw it here in a color that reads on both states.
-		std::shared_ptr<Font> font = APP->window->loadFont(asset::system("res/fonts/DejaVuSans.ttf"));
-		if (font && font->handle >= 0) {
-			nvgFontFaceId(args.vg, font->handle);
-			nvgFontSize(args.vg, mm(1.3f));
-			nvgTextAlign(args.vg, NVG_ALIGN_CENTER | NVG_ALIGN_MIDDLE);
-			nvgFillColor(args.vg, on ? nvgRGB(0xF5, 0xF1, 0xE9) : nvgRGB(0x2E, 0x28, 0x1F));
-			nvgText(args.vg, box.size.x / 2.f, box.size.y / 2.f, label, NULL);
-		}
+		drawBoldText(args.vg, box.size.x / 2.f, box.size.y / 2.f, label, 1.8f,
+			on ? nvgRGB(0xFF, 0xFF, 0xFF) : nvgRGB(0x2E, 0x28, 0x1F));
 	}
-	const char* label = "FILL";
 	void onButton(const ButtonEvent& e) override {
 		if (e.action == GLFW_PRESS && e.button == GLFW_MOUSE_BUTTON_LEFT) {
 			ParamQuantity* pq = getParamQuantity();
@@ -575,7 +615,7 @@ struct LoadButton : OpaqueWidget {
 	int track = 0;
 
 	LoadButton() {
-		box.size = mm2px(Vec(16.96f, 4.2f));
+		box.size = mm2px(Vec(BeamsLayout::LOAD_W, BeamsLayout::LOAD_H));
 	}
 	void draw(const DrawArgs& args) override {
 		float sw = mm(0.4f);
@@ -586,23 +626,24 @@ struct LoadButton : OpaqueWidget {
 		nvgStrokeColor(args.vg, nvgRGB(0x4A, 0x44, 0x38));
 		nvgStrokeWidth(args.vg, sw);
 		nvgStroke(args.vg);
-		std::shared_ptr<Font> font = APP->window->loadFont(asset::system("res/fonts/DejaVuSans.ttf"));
-		if (font && font->handle >= 0) {
-			nvgFontFaceId(args.vg, font->handle);
-			nvgFontSize(args.vg, mm(1.6f));
-			nvgTextAlign(args.vg, NVG_ALIGN_CENTER | NVG_ALIGN_MIDDLE);
-			nvgFillColor(args.vg, nvgRGB(0x4A, 0x44, 0x38));
-			nvgText(args.vg, box.size.x / 2.f, box.size.y / 2.f, "LOAD", NULL);
-		}
+		drawBoldText(args.vg, box.size.x / 2.f, box.size.y / 2.f, "LOAD", 2.6f, nvgRGB(0x4A, 0x44, 0x38));
 	}
 	void onButton(const ButtonEvent& e) override {
 		if (e.action == GLFW_PRESS && e.button == GLFW_MOUSE_BUTTON_LEFT) {
 			e.consume(this);
 			if (!module) return;
-			char* path = osdialog_file(OSDIALOG_OPEN_DIR, NULL, NULL, NULL);
+			// Open where the last load happened (parent of the last folder
+			// picked); on a fresh install, fall back to this track's own
+			// saved folder, else the OS default.
+			std::string start = browseDir();
+			if (start.empty() && !module->tracks[track].folder.empty())
+				start = system::getDirectory(module->tracks[track].folder);
+			char* path = osdialog_file(OSDIALOG_OPEN_DIR, start.empty() ? NULL : start.c_str(), NULL, NULL);
 			if (path) {
-				module->loadTrackFolder(track, path, APP->engine->getSampleRate());
+				std::string picked = path;
 				free(path);
+				rememberBrowseDir(picked);
+				module->loadTrackFolder(track, picked, APP->engine->getSampleRate());
 			}
 		}
 	}
@@ -622,7 +663,7 @@ struct RRDotsWidget : Widget {
 	};
 
 	RRDotsWidget() {
-		box.size = mm2px(Vec(9.79f, 5.2f));
+		box.size = mm2px(Vec(BeamsLayout::DOTS_BOX_W, BeamsLayout::DOTS_BOX_H));
 	}
 	void draw(const DrawArgs& args) override {
 		int loaded = module ? module->tracks[track].loadedCount : 0;
@@ -632,13 +673,13 @@ struct RRDotsWidget : Widget {
 		// rotation working. Loaded-but-idle dots are dimmer.
 		int current = module ? module->tracks[track].lastPlayed : -1;
 		float cy = box.size.y / 2.f;
-		float pitch = mm(2.33f);
+		float pitch = mm(BeamsLayout::DOTS_PITCH);
 		for (int d = 0; d < N; d++) {
-			float dx = mm(1.4f) + d * pitch;
+			float dx = mm(BeamsLayout::DOTS_PAD) + d * pitch;
 			bool isLoaded = d < loaded;
 			bool isCurrent = isLoaded && d == current;
 			nvgBeginPath(args.vg);
-			nvgCircle(args.vg, dx, cy, mm(0.6f));
+			nvgCircle(args.vg, dx, cy, mm(BeamsLayout::DOTS_R));
 			if (isLoaded) {
 				NVGcolor c = colors[d];
 				if (!isCurrent) c.a = 0.35f;
@@ -651,7 +692,7 @@ struct RRDotsWidget : Widget {
 			if (isCurrent) {
 				// Emphasis ring around the active slot.
 				nvgBeginPath(args.vg);
-				nvgCircle(args.vg, dx, cy, mm(1.0f));
+				nvgCircle(args.vg, dx, cy, mm(BeamsLayout::DOTS_R + 0.32f));
 				nvgStrokeColor(args.vg, colors[d]);
 				nvgStrokeWidth(args.vg, mm(0.25f));
 				nvgStroke(args.vg);
@@ -665,74 +706,60 @@ struct BeamsWidget : ModuleWidget {
 		setModule(module);
 		setPanel(createPanel(asset::plugin(pluginInstance, "res/Beams.svg")));
 
-		addChild(createLightCentered<SmallLight<BlueLight>>(mm2px(Vec(5.5, 5.5)), module, Beams::LINK_LEFT_LIGHT));
-		addChild(createLightCentered<SmallLight<BlueLight>>(mm2px(Vec(85.94, 5.5)), module, Beams::LINK_RIGHT_LIGHT));
+		using namespace BeamsLayout;
+		addChild(createLightCentered<SmallLight<BlueLight>>(mm2px(Vec(LINK_L_X, LINK_L_Y)), module, Beams::LINK_LEFT_LIGHT));
+		addChild(createLightCentered<SmallLight<BlueLight>>(mm2px(Vec(LINK_R_X, LINK_R_Y)), module, Beams::LINK_RIGHT_LIGHT));
 
-		// --- I/O row ---
-		addInput(createInputCentered<PJ301MPort>(mm2px(Vec(22.67, 18.3)), module, Beams::CLOCK_INPUT));
-		addParam(placeParam<BeamsKnob>(module, Beams::TEMPO_PARAM, 39.43f, 18.3f, 5.6f, 5.6f));
-		addOutput(createOutputCentered<PJ301MPort>(mm2px(Vec(56.2, 18.3)), module, Beams::MASTER_L_OUTPUT));
-		addOutput(createOutputCentered<PJ301MPort>(mm2px(Vec(73.77, 18.3)), module, Beams::MASTER_R_OUTPUT));
+		// All coordinates/sizes come from BeamsLayout.hpp, generated by
+		// beams_layout.py alongside the panel SVG, so they cannot drift.
+		addInput(createInputCentered<PJ301MPort>(mm2px(Vec(CLOCK_X, IO_Y)), module, Beams::CLOCK_INPUT));
+		addParam(placeParam<BeamsKnob>(module, Beams::TEMPO_PARAM, TEMPO_X, IO_Y, TEMPO_SIZE, TEMPO_SIZE));
+		addOutput(createOutputCentered<PJ301MPort>(mm2px(Vec(OUTL_X, IO_Y)), module, Beams::MASTER_L_OUTPUT));
+		addOutput(createOutputCentered<PJ301MPort>(mm2px(Vec(OUTR_X, IO_Y)), module, Beams::MASTER_R_OUTPUT));
 
-		// --- Per-track controls -- coordinates and sizes match
-		// beams_layout.json exactly (generated by beams_layout.py), so
-		// the widgets and the printed panel can't drift apart. ---
-		static const float trigX[4] = {19.18f, 38.54f, 57.90f, 77.26f};
-		static const float trigY = 42.78f;
-		static const float toggleX[4] = {13.58f, 32.94f, 52.30f, 71.66f};
-		static const float dotsBoxX[4] = {17.87f, 37.23f, 56.59f, 75.95f};  // left edge of the printed readout box
-		static const float rowY = 58.85f;
-		static const float loadX[4] = {19.18f, 38.54f, 57.90f, 77.26f};
-		static const float loadY = 72.52f;
-		static const float knobRow1Y = 85.79f;
-		static const float knobRow2Y = 99.16f;
-		static const float knobXLo[4] = {13.00f, 32.36f, 51.72f, 71.08f};
-		static const float knobXMid[4] = {19.18f, 38.54f, 57.90f, 77.26f};
-		static const float knobXHi[4] = {25.36f, 44.72f, 64.08f, 83.44f};
-		static const float fillX[4] = {14.64f, 34.00f, 53.36f, 72.72f};
-		static const float invX[4] = {23.72f, 43.08f, 62.44f, 81.80f};
-		static const float fillY = 112.73f;
-
+		const NVGcolor brass = nvgRGB(0x8A, 0x64, 0x23);
+		const NVGcolor maroon = nvgRGB(0x8A, 0x2A, 0x2A);
 		for (int i = 0; i < 4; i++) {
-			addInput(createInputCentered<PJ301MPort>(mm2px(Vec(trigX[i], trigY)), module, Beams::TRIG_INPUT + i));
+			addInput(createInputCentered<PJ301MPort>(mm2px(Vec(TRIG_X[i], TRIG_Y)), module, Beams::TRIG_INPUT + i));
 
-			addParam(placeParam<RRModeButton>(module, Beams::RRMODE_PARAM + i, toggleX[i], rowY, 5.77f, 3.8f));
+			addParam(placeParam<RRModeButton>(module, Beams::RRMODE_PARAM + i, RR_X[i], RR_Y, RR_W, RR_H));
 
 			auto* dots = new RRDotsWidget();
 			dots->module = module;
 			dots->track = i;
-			dots->box.pos = mm2px(Vec(dotsBoxX[i], rowY - 2.6f));
+			dots->box.pos = mm2px(Vec(DOTS_BOX_X[i], DOTS_BOX_Y));
 			addChild(dots);
 
 			auto* load = new LoadButton();
 			load->module = module;
 			load->track = i;
-			load->box.pos = mm2px(Vec(loadX[i], loadY)).minus(load->box.size.div(2.f));
+			load->box.pos = mm2px(Vec(LOAD_X[i], LOAD_Y)).minus(load->box.size.div(2.f));
 			addChild(load);
 
-			addParam(placeParam<BeamsKnob>(module, Beams::LEVEL_PARAM + i, knobXLo[i], knobRow1Y, 4.6f, 4.6f));
-			addParam(placeParam<BeamsKnob>(module, Beams::TUNE_PARAM + i, knobXMid[i], knobRow1Y, 4.6f, 4.6f));
-			auto* kDecay = placeParam<BeamsKnob>(module, Beams::DECAY_PARAM + i, knobXHi[i], knobRow1Y, 4.6f, 4.6f);
-			kDecay->ringColor = nvgRGB(0x8A, 0x2A, 0x2A);
+			// 2 columns x 3 rows: left = sound, right = rhythm.
+			addParam(placeParam<BeamsKnob>(module, Beams::LEVEL_PARAM + i, KNOB_XL[i], KNOB_Y[0], KNOB_SIZE, KNOB_SIZE));
+			addParam(placeParam<BeamsKnob>(module, Beams::TUNE_PARAM + i, KNOB_XL[i], KNOB_Y[1], KNOB_SIZE, KNOB_SIZE));
+			auto* kDecay = placeParam<BeamsKnob>(module, Beams::DECAY_PARAM + i, KNOB_XL[i], KNOB_Y[2], KNOB_SIZE, KNOB_SIZE);
+			kDecay->ringColor = maroon;
 			addParam(kDecay);
 
-			const NVGcolor brass = nvgRGB(0x8A, 0x64, 0x23);
-			auto* kLen = placeParam<BeamsKnob>(module, Beams::LEN_PARAM + i, knobXLo[i], knobRow2Y, 4.6f, 4.6f);
+			auto* kLen = placeParam<BeamsKnob>(module, Beams::LEN_PARAM + i, KNOB_XR[i], KNOB_Y[0], KNOB_SIZE, KNOB_SIZE);
 			kLen->ringColor = brass;
 			addParam(kLen);
-			auto* kSteps = placeParam<BeamsKnob>(module, Beams::STEPS_PARAM + i, knobXMid[i], knobRow2Y, 4.6f, 4.6f);
+			auto* kSteps = placeParam<BeamsKnob>(module, Beams::STEPS_PARAM + i, KNOB_XR[i], KNOB_Y[1], KNOB_SIZE, KNOB_SIZE);
 			kSteps->ringColor = brass;
 			addParam(kSteps);
-			auto* kRot = placeParam<BeamsKnob>(module, Beams::ROT_PARAM + i, knobXHi[i], knobRow2Y, 4.6f, 4.6f);
+			auto* kRot = placeParam<BeamsKnob>(module, Beams::ROT_PARAM + i, KNOB_XR[i], KNOB_Y[2], KNOB_SIZE, KNOB_SIZE);
 			kRot->ringColor = brass;
 			addParam(kRot);
 
-			auto* fill = placeParam<FillToggleButton>(module, Beams::FILL_PARAM + i, fillX[i], fillY, 7.88f, 3.6f);
+			auto* fill = placeParam<FillToggleButton>(module, Beams::FILL_PARAM + i, FILL_X[i], FILL_Y, FILL_W, FILL_H);
 			fill->label = "FILL";
+			fill->onColor = nvgRGB(0x24, 0x9A, 0x62);   // green
 			addParam(fill);
-			auto* inv = placeParam<FillToggleButton>(module, Beams::INV_PARAM + i, invX[i], fillY, 7.88f, 3.6f);
+			auto* inv = placeParam<FillToggleButton>(module, Beams::INV_PARAM + i, INV_X[i], FILL_Y, FILL_W, FILL_H);
 			inv->label = "INV";
-			inv->onColor = nvgRGB(0x8A, 0x2A, 0x2A);
+			inv->onColor = nvgRGB(0xE0, 0x7B, 0x1F);    // orange
 			addParam(inv);
 		}
 	}
