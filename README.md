@@ -2,7 +2,7 @@
 
 > **18 HP Quad Algorithmic Euclidean Drum Engine & Sampler**
 
-<p align="center">
+<p align="leftr">
   <img src="res/Beams.svg" alt="Grandsummoner Beams Front Panel" width="560" />
 </p>
 
