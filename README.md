@@ -50,3 +50,58 @@ Every Grandsummoner module adheres to a unified visual and tactile standard:
 ---
 
 ## User Guide & Controls
+### 1. Global Clock & Master Section (Top Card)
+- **TEMPO (5 – 400 BPM)**: Sets internal master clock frequency when `CLOCK` is unpatched. Protected against accidental patch randomization.
+- **CLOCK Input**: Standard Eurorack clock/trigger input (threshold +1.5V). When patched, overrides internal tempo and slaves the engine.
+- **MASTER L / MASTER R**: Stereo audio outputs with internal dynamic soft-limiting to prevent digital clipping across hot drum layers.
+
+### 2. Per-Track Sound & Sequencing Controls (Tracks 1–4)
+Each of the 4 tracks provides independent sonic and Euclidean parameters:
+- **LEVEL (0% – 100%)**: Output volume of the track within the internal master mix.
+- **TUNE (Bipolar: -12 to +12 Semitones)**: Center-detented pitch control for tuning kicks to the song's root key or pitching percussion up/down.
+- **DECAY (10 ms – 2.5 s)**: Amplitude envelope decay time. Modulated additively by Intel when expander linked.
+- **LEN (1 – 32 Steps)**: Euclidean sequence pattern length. Defaults to 16 steps.
+- **STEPS (0 – 32 Hits)**: Number of active hits distributed evenly across the pattern length using Bjorklund's Euclidean algorithm.
+- **ROT (0 – 31 Rotation)**: Shifts the starting step of the Euclidean pattern forward in time.
+- **RR MODE Button (Navy/Teal `#2E4A6E`)**: Toggles Round-Robin sample cycling between **Sequential** (reproducible cyclic variations) and **Random** (organic humanization).
+- **FILL Button**: Momentarily floods the pattern with high-density fill steps for live build-ups and transitions.
+- **INV Button (Inverse Fill)**: Inverts pattern logic, triggering hits on steps that are normally rests.
+- **MUTE Button (Maroon `#8A2A2A`)**: Silences audio output for the track while the underlying Euclidean sequencer continues running in phase.
+- **TRIG Input**: External gate/trigger jack for triggering the voice manually from sequencers, MIDI-CV interfaces, or clock dividers.
+
+---
+
+## Technical Specifications
+
+- **Width**: 18 HP (91.44 mm)
+- **Height**: 3U (128.5 mm physical standard / bit-for-bit 380px VCV grid height)
+- **Depth**: 28 mm
+- **Voices**: 4 simultaneous polyphonic sample-playback channels
+- **Euclidean Resolution**: 1 to 32 steps per track with independent rotation
+- **Tempo Range**: 5.0 to 400.0 BPM (internal clock generator)
+- **Internal DSP**: 32-bit floating point with anti-aliased sinc interpolation
+- **Output Level**: Standard modular Eurorack audio (±5V / 10Vpp)
+
+---
+
+## Building and Installation
+
+### Prebuilt Plugin Package
+Download the latest `Beams-2.0.0-<platform>.vcvplugin` from the [Releases](https://github.com/Grandsummoner/beams/releases) section and copy it to your VCV Rack `plugins` directory:
+- **Windows**: `Documents/Rack2/plugins/`
+- **macOS**: `Documents/Rack2/plugins/`
+- **Linux**: `~/.Rack2/plugins/`
+
+### Building from Source
+Ensure you have the [VCV Rack SDK v2](https://vcvrack.com/downloads/) installed.
+
+```bash
+# Clone the repository
+git clone https://github.com/Grandsummoner/beams.git
+cd beams
+
+# Set your Rack SDK directory
+export RACK_DIR=/path/to/Rack-SDK
+
+# Build the distributable package
+make -j2 dist
