@@ -92,16 +92,4 @@ Download the latest `Beams-2.0.0-<platform>.vcvplugin` from the [Releases](https
 - **macOS**: `Documents/Rack2/plugins/`
 - **Linux**: `~/.Rack2/plugins/`
 
-### Building from Source
-Ensure you have the [VCV Rack SDK v2](https://vcvrack.com/downloads/) installed.
-
-```bash
-# Clone the repository
-git clone https://github.com/Grandsummoner/beams.git
-cd beams
-
-# Set your Rack SDK directory
-export RACK_DIR=/path/to/Rack-SDK
-
-# Build the distributable package
-make -j2 dist
+*(Note: The downloadable [`beams-updated.zip`](https://ais-dev-yxuk3bcjlmwmu4cztoqien-573574210521.asia-southeast1.run.app/beams-updated.zip) already has this exact file pre-saved inside as `README.md` if you prefer to unpack it directly).*
