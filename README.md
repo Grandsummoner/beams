@@ -2,7 +2,7 @@
 
 > **18 HP Quad Algorithmic Euclidean Drum Engine & Sampler**
 
-<p align="leftr">
+<p align="center">
   <img src="res/Beams.svg" alt="Grandsummoner Beams Front Panel" width="560" />
 </p>
 
@@ -36,6 +36,7 @@ Every Grandsummoner module adheres to a unified visual and tactile standard:
 - **Center-Detent Indicators** on bipolar pitch controls (`TUNE`).
 
 ### Standalone vs. Family Operation
+
 - **100% Standalone**: Beams requires no other modules to produce full rhythmic arrangements. Patch external clocks into `CLOCK`, trigger tracks externally via `TRIG 1–4`, or let Beams run freely using its internal 5–400 BPM clock generator.
 - **Universal Adjacency Link**: Side connector LEDs (`LINK L` and `LINK R`) illuminate whenever Beams is adjacent to any Grandsummoner family module (**Spaces Command**, **Intel**, **Stellar**, or **Explorer**).
 
@@ -50,6 +51,32 @@ Every Grandsummoner module adheres to a unified visual and tactile standard:
 ---
 
 ## User Guide & Controls
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                       BEAMS  18 HP                          │
+│                                                             │
+│  [TEMPO]     (CLOCK)      [MASTER L]      [MASTER R]        │
+│   5-400 bpm   clk input    stereo out      stereo out       │
+│                                                             │
+│  TRACK 1: KICK                                              │
+│  [LEVEL]   [TUNE]   [DECAY]   [LEN]   [STEPS]  [ROT] (TRIG) │
+│  [RR MODE] [FILL]   [INV]     [MUTE]                        │
+│                                                             │
+│  TRACK 2: SNARE                                             │
+│  [LEVEL]   [TUNE]   [DECAY]   [LEN]   [STEPS]  [ROT] (TRIG) │
+│  [RR MODE] [FILL]   [INV]     [MUTE]                        │
+│                                                             │
+│  TRACK 3: HI-HAT                                            │
+│  [LEVEL]   [TUNE]   [DECAY]   [LEN]   [STEPS]  [ROT] (TRIG) │
+│  [RR MODE] [FILL]   [INV]     [MUTE]                        │
+│                                                             │
+│  TRACK 4: PERCUSSION                                        │
+│  [LEVEL]   [TUNE]   [DECAY]   [LEN]   [STEPS]  [ROT] (TRIG) │
+│  [RR MODE] [FILL]   [INV]     [MUTE]                        │
+└─────────────────────────────────────────────────────────────┘
+```
+
 ### 1. Global Clock & Master Section (Top Card)
 - **TEMPO (5 – 400 BPM)**: Sets internal master clock frequency when `CLOCK` is unpatched. Protected against accidental patch randomization.
 - **CLOCK Input**: Standard Eurorack clock/trigger input (threshold +1.5V). When patched, overrides internal tempo and slaves the engine.
@@ -57,6 +84,7 @@ Every Grandsummoner module adheres to a unified visual and tactile standard:
 
 ### 2. Per-Track Sound & Sequencing Controls (Tracks 1–4)
 Each of the 4 tracks provides independent sonic and Euclidean parameters:
+
 - **LEVEL (0% – 100%)**: Output volume of the track within the internal master mix.
 - **TUNE (Bipolar: -12 to +12 Semitones)**: Center-detented pitch control for tuning kicks to the song's root key or pitching percussion up/down.
 - **DECAY (10 ms – 2.5 s)**: Amplitude envelope decay time. Modulated additively by Intel when expander linked.
@@ -83,3 +111,35 @@ Each of the 4 tracks provides independent sonic and Euclidean parameters:
 - **Output Level**: Standard modular Eurorack audio (±5V / 10Vpp)
 
 ---
+
+## Building and Installation
+
+### Prebuilt Plugin Package
+Download the latest `Beams-2.0.0-<platform>.vcvplugin` from the [Releases](https://github.com/Grandsummoner/beams/releases) section and copy it to your VCV Rack `plugins` directory:
+- **Windows**: `Documents/Rack2/plugins/`
+- **macOS**: `Documents/Rack2/plugins/`
+- **Linux**: `~/.Rack2/plugins/`
+
+### Building from Source
+Ensure you have the [VCV Rack SDK v2](https://vcvrack.com/downloads/) installed.
+
+```bash
+# Clone the repository
+git clone https://github.com/Grandsummoner/beams.git
+cd beams
+
+# Set your Rack SDK directory
+export RACK_DIR=/path/to/Rack-SDK
+
+# Build the distributable package
+make -j2 dist
+```
+
+The compiled package will be located in `dist/Beams-2.0.0-<platform>.vcvplugin`.
+
+---
+
+## License
+
+This software is released under the **GNU General Public License v3.0 or later** (GPL-3.0-or-later).  
+Copyright © 2026 Grandsummoner. All rights reserved.
