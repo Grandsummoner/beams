@@ -2,7 +2,7 @@
 
 > **18 HP Quad Algorithmic Euclidean Drum Engine & Sampler**
 
-<p align="center">
+<p align="left">
   <img src="res/Beams.svg" alt="Grandsummoner Beams Front Panel" width="560" />
 </p>
 
@@ -109,33 +109,6 @@ Each of the 4 tracks provides independent sonic and Euclidean parameters:
 - **Tempo Range**: 5.0 to 400.0 BPM (internal clock generator)
 - **Internal DSP**: 32-bit floating point with anti-aliased sinc interpolation
 - **Output Level**: Standard modular Eurorack audio (±5V / 10Vpp)
-
----
-
-## Building and Installation
-
-### Prebuilt Plugin Package
-Download the latest `Beams-2.0.0-<platform>.vcvplugin` from the [Releases](https://github.com/Grandsummoner/beams/releases) section and copy it to your VCV Rack `plugins` directory:
-- **Windows**: `Documents/Rack2/plugins/`
-- **macOS**: `Documents/Rack2/plugins/`
-- **Linux**: `~/.Rack2/plugins/`
-
-### Building from Source
-Ensure you have the [VCV Rack SDK v2](https://vcvrack.com/downloads/) installed.
-
-```bash
-# Clone the repository
-git clone https://github.com/Grandsummoner/beams.git
-cd beams
-
-# Set your Rack SDK directory
-export RACK_DIR=/path/to/Rack-SDK
-
-# Build the distributable package
-make -j2 dist
-```
-
-The compiled package will be located in `dist/Beams-2.0.0-<platform>.vcvplugin`.
 
 ---
 
