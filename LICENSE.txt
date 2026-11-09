@@ -1,0 +1,1 @@
+GPL-3.0-or-later -- matches the rest of the family; replace with the actual license text before publishing.
