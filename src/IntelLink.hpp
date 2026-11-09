@@ -1,73 +1,65 @@
 #pragma once
 #include <rack.hpp>
-
 // Shared message layout for the invisible Intel <-> Command expander link.
-//
-// Both plugins carry an identical copy of this header: the enum defines the
-// wire protocol between them, and keeping the struct and type IDs in lockstep
+// This exact struct definition is duplicated verbatim in both the Intel and
+// Spaces (Command) repos -- they're separate plugin binaries, so there's no
+// shared header to include from; keeping the text identical in both copies
 // is what keeps the memory layout compatible across the expander boundary.
-//
-// In VCV Rack v2, expanders can be chained horizontally in a contiguous row:
-// each module writes into its own `leftExpander.producerMessage` /
-// `rightExpander.producerMessage` and reads the neighbour's message via
-// its `consumerMessage` slot. When two Grandsummoner modules sit side by side,
-// they exchange these small typed structs each sample frame without any
-// patch cables or user intervention.
-//
-// Layout contract:
-// - `type` identifies what kind of data the message holds (see IntelLinkType).
-// - Modules MUST check `type` before reading any other field.
-// - Unknown message types are ignored silently.
-// - Producer and consumer buffers are swapped by the engine on every frame
-//   if `messageFlipRequested` was set.
-
-enum IntelLinkType : uint32_t {
-	INTEL_LINK_NONE        = 0,
-	INTEL_LINK_MOD_MESSAGE = 0x494E544C, // 'INTL' - Intel's broadcast to neighbours
-	INTEL_LINK_BEAMS_TICK  = 0x4245414D, // 'BEAM' - Beams master clock pulse
-};
-
+// If you ever add/reorder fields here, make the identical edit in the other
+// repo's copy or the two sides will silently misread each other.
 struct IntelModMessage {
-	uint32_t type;            // must be INTEL_LINK_MOD_MESSAGE
-	float    rate;            // Intel RATE pot + CV (normalized 0..1)
-	float    depth;           // Intel DEPTH pot + CV (normalized 0..1)
-	float    tone;            // Intel TONE pot + CV (normalized 0..1)
-	float    speed;           // Intel SPEED pot + CV (normalized 0..1)
-	float    trig[4];         // 4 trigger lane outputs (0 or 10V pulses)
-	uint32_t activeLanesMask; // bitmask of lanes currently firing
-	uint32_t version;         // protocol revision (currently 1)
+	// Continuous modulation offsets, already depth-scaled by Intel, roughly
+	// in a -1..1 range (Command decides how to apply/scale/floor each one
+	// against its own parameter's real range).
+	float rateOffset = 0.f;
+	float densOffset = 0.f;
+	float swingOffset = 0.f;
+	float entropyOffset = 0.f;
+	// Static DEPTH-setting level per channel, 0 (no LFO) to 1 (max LFO) --
+	// i.e. depthState/3, NOT the live oscillating value above. Command's
+	// optional depth-gauge display reads these; actual modulation
+	// application still uses the *Offset fields.
+	float rateDepth = 0.f;
+	float densDepth = 0.f;
+	float swingDepth = 0.f;
+	float entropyDepth = 0.f;
+	// Global DECAY offset for Beams, 0..1, sent from Intel's TONE knob
+	// (TONE stays Intel's own REVERB-page tone control; this is a second,
+	// simultaneous use of that same knob's value, not a separate control).
+	// Beams treats this as an additive offset over each track's own local
+	// DECAY knob, same "generic offset, receiver scales against its own
+	// real range" pattern as the *Offset fields above.
+	float decayOffset = 0.f;
+	// (v6) Beams -> Intel clock link, sent the OTHER way along the same
+	// expander chain: Beams bumps beamsTick once per master clock tick
+	// (its CLOCK input if patched, else its own TEMPO) and Intel derives
+	// its four trigger outputs from those ticks (RATE = every 8th/4th/
+	// 2nd/every tick), so Intel's triggers lock to Beams' grid instead of
+	// free-running. beamsTickValid stays false until Beams has actually
+	// sent one; Intel then falls back to its own free-running SPEED.
+	unsigned int beamsTick = 0;
+	bool beamsTickValid = false;
+	//
+	// This one struct type is reused for BOTH the Intel<->Command link
+	// AND the separate Intel<->Beams link -- they're different message
+	// instances (each module owns its own producer/consumer buffers for
+	// its own expander slots, see the comment on Command's/Beams'
+	// buffers), so there's no collision: Command's `present` means
+	// "Intel is talking to COMMAND" on Command's own buffer instance,
+	// Beams' `present` means "Intel is talking to BEAMS" on Beams' own,
+	// separate buffer instance. Each side only reads the fields
+	// relevant to it (Command: rate/dens/swing/entropy; Beams: decay).
+	// True whenever Intel is actually present and sending on this
+	// particular link.
+	bool present = false;
 };
-
-struct BeamsTickMessage {
-	uint32_t type;            // must be INTEL_LINK_BEAMS_TICK
-	uint32_t tickCount;       // monotonically increasing tick sequence
-	float    tempoBpm;        // current effective BPM of Beams' internal clock
-	uint8_t  activeTrackMask; // bitmask of tracks that fired this tick (bits 0..3)
-	uint8_t  _reserved[3];
-};
-
-// Maximum number of adjacent hops to walk when searching for Intel along the
-// expander chain: Beams bumps beamsTick once per master clock tick
-// and passes it outward.
-static const int INTEL_LINK_MAX_HOPS = 32;
-
-// Helper: checks whether a module pointer is non-null and belongs to the
-// Grandsummoner family (by matching the plugin slug against our known family).
-inline bool isIntelFamilyModule(rack::engine::Module* m) {
-	if (!m || !m->model || !m->model->plugin) return false;
-	const std::string& p = m->model->plugin->slug;
-	return p == "Intel" || p == "Grandsummoner-Intel" ||
-	       p == "SpacesCommand" || p == "Grandsummoner-SpacesCommand" ||
-	       p == "Beams" || p == "Grandsummoner-Beams" ||
-	       p == "Stellar" || p == "Grandsummoner-Stellar" ||
-	       p == "Explorer" || p == "Grandsummoner-Explorer";
-}
 
 // Finds the nearest module with the given plugin/model slug by walking
 // outward from `self` in one direction (right = true, else left) through
 // the contiguous row of adjacent modules -- so the link works with other
 // modules (Stellar, etc.) sitting in between, not just immediate
-// neighbors. Stops at the first gap in the row.
+// neighbors. Stops at the first gap in the row. Also identical in both
+// repos' copies of this file.
 inline rack::engine::Module* intelLinkFind(rack::engine::Module* self, bool right, const char* slug) {
 	rack::engine::Module* m = right ? self->rightExpander.module : self->leftExpander.module;
 	for (int hops = 0; m && hops < 32; hops++) {
