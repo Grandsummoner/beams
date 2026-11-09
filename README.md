@@ -83,13 +83,3 @@ Each of the 4 tracks provides independent sonic and Euclidean parameters:
 - **Output Level**: Standard modular Eurorack audio (±5V / 10Vpp)
 
 ---
-
-## Building and Installation
-
-### Prebuilt Plugin Package
-Download the latest `Beams-2.0.0-<platform>.vcvplugin` from the [Releases](https://github.com/Grandsummoner/beams/releases) section and copy it to your VCV Rack `plugins` directory:
-- **Windows**: `Documents/Rack2/plugins/`
-- **macOS**: `Documents/Rack2/plugins/`
-- **Linux**: `~/.Rack2/plugins/`
-
-*(Note: The downloadable [`beams-updated.zip`](https://ais-dev-yxuk3bcjlmwmu4cztoqien-573574210521.asia-southeast1.run.app/beams-updated.zip) already has this exact file pre-saved inside as `README.md` if you prefer to unpack it directly).*
