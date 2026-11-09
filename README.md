@@ -1,8 +1,3 @@
----
-
-# 2. Beams (`beams/README.md`)
-
-```markdown
 # Grandsummoner Beams
 
 > **18 HP Quad Algorithmic Euclidean Drum Engine & Sampler**
